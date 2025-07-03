@@ -1,0 +1,12 @@
+services:
+  claude-code-api:
+    build: .
+    container_name: claude-code-api
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - PROJECT_ROOT=/home/work/projects
+    volumes:
+      - ./projects:/home/work/projects:rw
+      - $HOME/.claude:/home/work/.claude:ro

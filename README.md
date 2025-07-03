@@ -19,6 +19,13 @@ Use the Makefile to install the project or pip/uv.
 
 ![Roo Code chat](assets/roo_code.png) 
 
+### Dockerized Usage
+```bash
+docker compose up
+```
+
+The docker compose setup mounts the current user's claude directory as read-only for a zero configuration setup.
+
 ### Python Implementation
 ```bash
 # Clone and setup
