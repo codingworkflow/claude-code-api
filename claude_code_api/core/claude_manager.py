@@ -60,7 +60,7 @@ class ClaudeProcess:
             )
             
             # Start process from src directory (where Claude works without API key)
-            src_dir = "claude_code_api"
+            src_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
             logger.info(f"Starting Claude from directory: {src_dir}")
             logger.info(f"Command: {' '.join(cmd)}")
             
