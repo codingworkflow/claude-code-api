@@ -34,7 +34,7 @@ make start
 
 ## Limitations
 
-- There might be a limit on maximum input below normal "Sonnet 4" input as Claude Code usually doesn't ingest more than 25 tokens (despite the context being 100k).
+- There might be a limit on maximum input below normal "Sonnet 4" input as Claude Code usually doesn't ingest more than 25k tokens (despite the context being 100k).
 - Claude Code auto-compacts context beyond 100k.
 - Currently runs with bypass mode to avoid tool errors.
 - Claude Code tools may need to be disabled to avoid overlap and background usage.
