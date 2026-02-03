@@ -64,58 +64,22 @@ class ClaudeProcess:
             logger.info(f"Starting Claude from directory: {src_dir}")
             logger.info(f"Command: {' '.join(cmd)}")
             
-            # Claude CLI runs to completion, so we run it and capture all output
+            # Start process asynchronously
             self.process = await asyncio.create_subprocess_exec(
                 *cmd,
                 cwd=src_dir,
                 stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
+                stderr=asyncio.subprocess.PIPE,
+                stdin=asyncio.subprocess.PIPE
             )
             
-            # Wait for process to complete and capture all output
-            stdout, stderr = await self.process.communicate()
+            self.is_running = True
             
-            logger.info(
-                "Claude process completed",
-                session_id=self.session_id,
-                return_code=self.process.returncode,
-                stdout_length=len(stdout) if stdout else 0,
-                stderr_length=len(stderr) if stderr else 0,
-                stderr_preview=stderr.decode()[:200] if stderr else "empty",
-                stdout_preview=stdout.decode()[:200] if stdout else "empty"
-            )
+            # Start background tasks to read output
+            asyncio.create_task(self._read_output())
+            asyncio.create_task(self._read_error())
             
-            if self.process.returncode == 0:
-                # Parse the output lines and put them in the queue
-                output_lines = stdout.decode().strip().split('\n')
-                claude_session_id = None
-                
-                for line in output_lines:
-                    if line.strip():
-                        try:
-                            data = json.loads(line)
-                            # Extract Claude's session ID from the first message
-                            if not claude_session_id and data.get("session_id"):
-                                claude_session_id = data["session_id"]
-                                logger.info(f"Extracted Claude session ID: {claude_session_id}")
-                                # Update our session_id to match Claude's
-                                self.session_id = claude_session_id
-                            await self.output_queue.put(data)
-                        except json.JSONDecodeError:
-                            # Handle non-JSON output
-                            await self.output_queue.put({"type": "text", "content": line})
-                
-                # Signal end of output
-                await self.output_queue.put(None)
-                self.is_running = False
-                return True
-            else:
-                # Handle error
-                error_text = stderr.decode().strip()
-                logger.error(f"Claude process failed with exit code {self.process.returncode}: {error_text}")
-                await self.error_queue.put(error_text)
-                await self.error_queue.put(None)
-                return False
+            return True
             
         except Exception as e:
             logger.error(
@@ -124,6 +88,66 @@ class ClaudeProcess:
                 error=str(e)
             )
             return False
+
+    async def _read_output(self):
+        """Read stdout from process line by line."""
+        claude_session_id = None
+
+        try:
+            while self.is_running and self.process:
+                line = await self.process.stdout.readline()
+                if not line:
+                    break
+
+                line_text = line.decode().strip()
+                if not line_text:
+                    continue
+
+                try:
+                    data = json.loads(line_text)
+                    # Extract Claude's session ID from the first message
+                    if not claude_session_id and data.get("session_id"):
+                        claude_session_id = data["session_id"]
+                        logger.info(f"Extracted Claude session ID: {claude_session_id}")
+                        # Update our session_id to match Claude's
+                        self.session_id = claude_session_id
+                    await self.output_queue.put(data)
+                except json.JSONDecodeError:
+                    # Handle non-JSON output
+                    await self.output_queue.put({"type": "text", "content": line_text})
+        except Exception as e:
+            logger.error("Error reading output", error=str(e))
+        finally:
+            await self.output_queue.put(None)
+            self.is_running = False
+
+            # Wait for process to exit
+            if self.process:
+                try:
+                    # Don't wait forever, just check if it's done or wait a bit
+                    # But actually we should let it run until it's done or stopped
+                    pass
+                except Exception:
+                    pass
+
+            logger.info(
+                "Claude process output stream ended",
+                session_id=self.session_id
+            )
+
+    async def _read_error(self):
+        """Read stderr from process."""
+        try:
+            while self.is_running and self.process:
+                line = await self.process.stderr.readline()
+                if not line:
+                    break
+
+                error_text = line.decode().strip()
+                if error_text:
+                    logger.warning("Claude stderr", message=error_text)
+        except Exception as e:
+            logger.error("Error reading stderr", error=str(e))
     
     
     async def get_output(self) -> AsyncGenerator[Dict[str, Any], None]:

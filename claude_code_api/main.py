@@ -104,6 +104,20 @@ app.add_middleware(
 app.middleware("http")(auth_middleware)
 
 
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request, exc):
+    """Custom handler for HTTP exceptions to support OpenAI error format."""
+    if isinstance(exc.detail, dict) and "error" in exc.detail:
+        return JSONResponse(
+            status_code=exc.status_code,
+            content=exc.detail
+        )
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": exc.detail}
+    )
+
+
 @app.exception_handler(Exception)
 async def global_exception_handler(request, exc):
     """Global exception handler with structured logging."""

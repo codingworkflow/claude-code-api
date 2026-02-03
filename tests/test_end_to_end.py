@@ -147,9 +147,8 @@ class TestModelsAPI:
         assert response.status_code == 404
         
         data = response.json()
-        assert "detail" in data
-        assert "error" in data["detail"]
-        assert data["detail"]["error"]["code"] == "model_not_found"
+        assert "error" in data
+        assert data["error"]["code"] == "model_not_found"
     
     def test_model_capabilities(self, client):
         """Test model capabilities endpoint."""
@@ -468,7 +467,8 @@ class TestErrorHandling:
             data="invalid json",
             headers={"content-type": "application/json"}
         )
-        assert response.status_code == 422  # Validation error
+        # API returns 400 for JSON decode errors (handled manually)
+        assert response.status_code == 400
     
     def test_missing_required_fields(self, client):
         """Test handling of missing required fields."""

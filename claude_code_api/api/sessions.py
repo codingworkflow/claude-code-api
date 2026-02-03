@@ -121,6 +121,23 @@ async def create_session(
         )
 
 
+@router.get("/sessions/stats")
+async def get_session_stats(req: Request) -> Dict[str, Any]:
+    """Get session statistics."""
+
+    session_manager: SessionManager = req.app.state.session_manager
+    claude_manager = req.app.state.claude_manager
+
+    session_stats = session_manager.get_session_stats()
+    active_claude_sessions = claude_manager.get_active_sessions()
+
+    return {
+        "session_stats": session_stats,
+        "active_claude_sessions": len(active_claude_sessions),
+        "claude_sessions": active_claude_sessions
+    }
+
+
 @router.get("/sessions/{session_id}", response_model=SessionInfo)
 async def get_session(session_id: str, req: Request) -> SessionInfo:
     """Get session by ID."""
@@ -176,20 +193,3 @@ async def delete_session(session_id: str, req: Request) -> JSONResponse:
             "status": "deleted"
         }
     )
-
-
-@router.get("/sessions/stats")
-async def get_session_stats(req: Request) -> Dict[str, Any]:
-    """Get session statistics."""
-    
-    session_manager: SessionManager = req.app.state.session_manager
-    claude_manager = req.app.state.claude_manager
-    
-    session_stats = session_manager.get_session_stats()
-    active_claude_sessions = claude_manager.get_active_sessions()
-    
-    return {
-        "session_stats": session_stats,
-        "active_claude_sessions": len(active_claude_sessions),
-        "claude_sessions": active_claude_sessions
-    }
