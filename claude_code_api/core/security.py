@@ -3,7 +3,6 @@
 import os
 import structlog
 from fastapi import HTTPException, status
-from typing import Optional
 
 logger = structlog.get_logger()
 
