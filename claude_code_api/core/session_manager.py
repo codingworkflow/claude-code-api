@@ -1,6 +1,8 @@
 """Session management for Claude Code API Gateway."""
 
 import asyncio
+import json
+import os
 import uuid
 from datetime import timedelta
 from typing import Any, Dict, List, Optional
@@ -22,6 +24,7 @@ class SessionInfo:
         self, session_id: str, project_id: str, model: str, system_prompt: str = None
     ):
         self.session_id = session_id
+        self.cli_session_id: Optional[str] = None
         self.project_id = project_id
         self.model = model
         self.system_prompt = system_prompt
@@ -38,9 +41,12 @@ class SessionManager:
 
     def __init__(self):
         self.active_sessions: Dict[str, SessionInfo] = {}
+        self.cli_session_index: Dict[str, str] = {}
+        self.session_map_path = settings.session_map_path
         self.cleanup_task: Optional[asyncio.Task] = None
         self._shutdown_event = asyncio.Event()
         self._start_cleanup_task()
+        self._load_cli_session_map()
 
     def _start_cleanup_task(self):
         """Start periodic cleanup task."""
@@ -57,11 +63,46 @@ class SessionManager:
                 )
                 break
             except asyncio.TimeoutError:
-                self.cleanup_expired_sessions()
+                await self.cleanup_expired_sessions()
             except asyncio.CancelledError:
                 raise
             except Exception as e:
                 logger.error("Error in periodic cleanup", error=str(e))
+
+    def _load_cli_session_map(self):
+        if not self.session_map_path:
+            return
+        try:
+            with open(self.session_map_path, "r", encoding="utf-8") as handle:
+                data = json.load(handle)
+        except FileNotFoundError:
+            return
+        except Exception as exc:
+            logger.warning("Failed to load session map", error=str(exc))
+            return
+
+        mapping = data.get("cli_to_api", data) if isinstance(data, dict) else {}
+        if isinstance(mapping, dict):
+            self.cli_session_index = {
+                str(cli_id): str(api_id)
+                for cli_id, api_id in mapping.items()
+                if cli_id and api_id
+            }
+
+    def _persist_cli_session_map(self):
+        if not self.session_map_path:
+            return
+        try:
+            directory = os.path.dirname(self.session_map_path)
+            if directory:
+                os.makedirs(directory, exist_ok=True)
+            tmp_path = f"{self.session_map_path}.tmp"
+            payload = {"cli_to_api": self.cli_session_index}
+            with open(tmp_path, "w", encoding="utf-8") as handle:
+                json.dump(payload, handle, indent=2, sort_keys=True)
+            os.replace(tmp_path, self.session_map_path)
+        except Exception as exc:
+            logger.warning("Failed to persist session map", error=str(exc))
 
     async def create_session(
         self,
@@ -109,12 +150,16 @@ class SessionManager:
 
     async def get_session(self, session_id: str) -> Optional[SessionInfo]:
         """Get session information."""
+        resolved_id = self._resolve_session_id(session_id)
+        if resolved_id is None:
+            resolved_id = session_id
+
         # Check active sessions first
-        if session_id in self.active_sessions:
-            return self.active_sessions[session_id]
+        if resolved_id in self.active_sessions:
+            return self.active_sessions[resolved_id]
 
         # Load from database if not in memory
-        db_session = await db_manager.get_session(session_id)
+        db_session = await db_manager.get_session(resolved_id)
         if db_session and db_session.is_active:
             # Restore to active sessions
             session_info = SessionInfo(
@@ -129,7 +174,7 @@ class SessionManager:
             session_info.total_tokens = db_session.total_tokens
             session_info.total_cost = db_session.total_cost
 
-            self.active_sessions[session_id] = session_info
+            self.active_sessions[resolved_id] = session_info
             return session_info
 
         return None
@@ -157,7 +202,7 @@ class SessionManager:
 
             # Add message to database
             message_data = {
-                "session_id": session_id,
+                "session_id": session_info.session_id,
                 "role": role,
                 "content": message_content,
                 "input_tokens": tokens_used if role == "user" else 0,
@@ -169,7 +214,9 @@ class SessionManager:
             await db_manager.add_message(message_data)
 
         # Update database metrics
-        await db_manager.update_session_metrics(session_id, tokens_used, cost)
+        await db_manager.update_session_metrics(
+            session_info.session_id, tokens_used, cost
+        )
 
         logger.debug(
             "Session updated",
@@ -179,12 +226,17 @@ class SessionManager:
             total_tokens=session_info.total_tokens,
         )
 
-    def end_session(self, session_id: str):
+    async def end_session(self, session_id: str):
         """End session and cleanup."""
-        if session_id in self.active_sessions:
-            session_info = self.active_sessions[session_id]
+        resolved_id = self._resolve_session_id(session_id) or session_id
+        if resolved_id in self.active_sessions:
+            session_info = self.active_sessions[resolved_id]
             session_info.is_active = False
-            del self.active_sessions[session_id]
+            await db_manager.deactivate_session(resolved_id)
+            if session_info.cli_session_id:
+                self.cli_session_index.pop(session_info.cli_session_id, None)
+                self._persist_cli_session_map()
+            del self.active_sessions[resolved_id]
 
             logger.info(
                 "Session ended",
@@ -195,7 +247,7 @@ class SessionManager:
                 total_cost=session_info.total_cost,
             )
 
-    def cleanup_expired_sessions(self):
+    async def cleanup_expired_sessions(self):
         """Clean up expired sessions."""
         current_time = utc_now()
         timeout_delta = timedelta(minutes=settings.session_timeout_minutes)
@@ -206,20 +258,34 @@ class SessionManager:
                 expired_sessions.append(session_id)
 
         for session_id in expired_sessions:
-            self.end_session(session_id)
+            await self.end_session(session_id)
             logger.info("Session expired and cleaned up", session_id=session_id)
 
     async def cleanup_all(self):
         """Clean up all sessions."""
         session_ids = list(self.active_sessions.keys())
         for session_id in session_ids:
-            self.end_session(session_id)
+            await self.end_session(session_id)
 
         if self.cleanup_task and not self.cleanup_task.done():
             self._shutdown_event.set()
             await self.cleanup_task
 
         logger.info("All sessions cleaned up")
+
+    def register_cli_session(self, api_session_id: str, cli_session_id: str):
+        if not cli_session_id:
+            return
+        session_info = self.active_sessions.get(api_session_id)
+        if session_info:
+            session_info.cli_session_id = cli_session_id
+        self.cli_session_index[cli_session_id] = api_session_id
+        self._persist_cli_session_map()
+
+    def _resolve_session_id(self, session_id: str) -> Optional[str]:
+        if session_id in self.active_sessions:
+            return session_id
+        return self.cli_session_index.get(session_id)
 
     def get_active_session_count(self) -> int:
         """Get number of active sessions."""
@@ -292,9 +358,9 @@ class ConversationManager:
 
         return formatted
 
-    def clear_conversation(self, session_id: str):
+    async def clear_conversation(self, session_id: str):
         """Clear conversation history."""
         if session_id in self.conversation_history:
             del self.conversation_history[session_id]
 
-        self.session_manager.end_session(session_id)
+        await self.session_manager.end_session(session_id)

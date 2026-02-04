@@ -295,12 +295,17 @@ async def create_chat_completion(request: ChatCompletionRequest, req: Request) -
 
         # Start Claude Code process
         try:
+
+            def _register_cli_session(cli_session_id: str):
+                session_manager.register_cli_session(session_id, cli_session_id)
+
             claude_process = await claude_manager.create_session(
                 session_id=session_id,
                 project_path=project_path,
                 prompt=user_prompt,
                 model=claude_model,
                 system_prompt=system_prompt,
+                on_cli_session_id=_register_cli_session,
             )
         except Exception as e:
             logger.error(
@@ -314,11 +319,11 @@ async def create_chat_completion(request: ChatCompletionRequest, req: Request) -
             )
 
         # Use Claude's actual session ID
-        claude_session_id = claude_process.session_id
+        api_session_id = session_id
 
         # Update session with user message
         await session_manager.update_session(
-            session_id=claude_session_id,
+            session_id=api_session_id,
             message_content=user_prompt,
             role="user",
             tokens_used=estimate_tokens(user_prompt),
@@ -327,13 +332,13 @@ async def create_chat_completion(request: ChatCompletionRequest, req: Request) -
         # Handle streaming vs non-streaming
         if request.stream:
             return StreamingResponse(
-                create_sse_response(claude_session_id, claude_model, claude_process),
+                create_sse_response(api_session_id, claude_model, claude_process),
                 media_type="text/event-stream",
                 headers={
                     "Cache-Control": "no-cache",
                     "Connection": "keep-alive",
                     "X-Accel-Buffering": "no",
-                    "X-Session-ID": claude_session_id,
+                    "X-Session-ID": api_session_id,
                     "X-Project-ID": project_id,
                 },
             )
@@ -341,7 +346,7 @@ async def create_chat_completion(request: ChatCompletionRequest, req: Request) -
         return await _collect_non_streaming_response(
             claude_process=claude_process,
             session_manager=session_manager,
-            session_id=claude_session_id,
+            session_id=api_session_id,
             model=claude_model,
             project_id=project_id,
         )
@@ -461,7 +466,7 @@ async def stop_completion(session_id: str, req: Request) -> Dict[str, str]:
     await claude_manager.stop_session(session_id)
 
     # End session
-    session_manager.end_session(session_id)
+    await session_manager.end_session(session_id)
 
     logger.info("Chat completion stopped", session_id=session_id)
 

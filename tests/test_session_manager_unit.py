@@ -41,13 +41,18 @@ async def test_get_session_from_db(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_cleanup_expired_sessions():
+async def test_cleanup_expired_sessions(monkeypatch):
     manager = SessionManager()
     session = SessionInfo(session_id="sess", project_id="proj", model="claude")
     session.updated_at = utc_now() - timedelta(minutes=60)
     manager.active_sessions["sess"] = session
 
-    manager.cleanup_expired_sessions()
+    async def fake_deactivate(_session_id):
+        return None
+
+    monkeypatch.setattr(sm_module.db_manager, "deactivate_session", fake_deactivate)
+
+    await manager.cleanup_expired_sessions()
     assert "sess" not in manager.active_sessions
     await manager.cleanup_all()
 

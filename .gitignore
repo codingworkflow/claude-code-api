@@ -324,6 +324,7 @@ $RECYCLE.BIN/
 .claude/
 sessions/
 projects/
+claude_sessions/
 
 # API keys and tokens
 api_keys.txt

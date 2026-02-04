@@ -239,6 +239,16 @@ class DatabaseManager:
                 session_obj.updated_at = utc_now()
                 await session.commit()
 
+    @staticmethod
+    async def deactivate_session(session_id: str):
+        """Mark session as inactive."""
+        async with AsyncSessionLocal() as session:
+            session_obj = await session.get(Session, session_id)
+            if session_obj:
+                session_obj.is_active = False
+                session_obj.updated_at = utc_now()
+                await session.commit()
+
 
 # Create global database manager instance
 db_manager = DatabaseManager()

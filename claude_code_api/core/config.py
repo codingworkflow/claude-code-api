@@ -59,6 +59,11 @@ def default_project_root() -> str:
     return os.path.join(os.getcwd(), "claude_projects")
 
 
+def default_session_map_path() -> str:
+    """Default path for CLI-to-API session mapping."""
+    return os.path.join(os.getcwd(), "claude_sessions", "session_map.json")
+
+
 def _is_shell_script_line(line: str) -> bool:
     if not line:
         return False
@@ -144,6 +149,7 @@ class Settings(BaseSettings):
     project_root: str = default_project_root()
     max_project_size_mb: int = 1000
     cleanup_interval_minutes: int = 60
+    session_map_path: str = default_session_map_path()
 
     # Database Configuration
     database_url: str = "sqlite:///./claude_api.db"

@@ -1,6 +1,13 @@
 [
   {
     "match": [
+      "mapping test",
+      "session map"
+    ],
+    "file": "claude_stream_session_map.jsonl"
+  },
+  {
+    "match": [
       "list files",
       "list the files",
       "use a tool"

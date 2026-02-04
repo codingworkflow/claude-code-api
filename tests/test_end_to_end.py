@@ -8,6 +8,7 @@ This test suite tests the complete API functionality including:
 - Streaming and non-streaming responses
 """
 
+import asyncio
 import json
 import os
 import shutil
@@ -41,6 +42,7 @@ PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from claude_code_api.core.config import settings
+from claude_code_api.core.session_manager import SessionManager
 from claude_code_api.main import app
 from claude_code_api.models.claude import get_available_models
 from tests.model_utils import get_test_model_id
@@ -218,6 +220,34 @@ class TestChatCompletions:
 
         response = client.post("/v1/chat/completions", json=request_data)
         assert response.status_code == 200
+
+    def test_cli_session_mapping_persisted(self, client):
+        """Persist CLI-to-API session mapping to disk and reload it."""
+        request_data = {
+            "model": DEFAULT_MODEL,
+            "messages": [{"role": "user", "content": "mapping test"}],
+            "stream": False,
+        }
+
+        response = client.post("/v1/chat/completions", json=request_data)
+        assert response.status_code == 200
+        data = response.json()
+        api_session_id = data["session_id"]
+
+        with open(settings.session_map_path, "r", encoding="utf-8") as handle:
+            saved = json.load(handle)
+        mapping = saved.get("cli_to_api", saved)
+        assert mapping["sess_map_1"] == api_session_id
+
+        async def _load_session():
+            new_manager = SessionManager()
+            session = await new_manager.get_session("sess_map_1")
+            await new_manager.cleanup_all()
+            return session
+
+        session = asyncio.run(_load_session())
+        assert session is not None
+        assert session.session_id == api_session_id
 
         data = response.json()
         assert data["model"] == DEFAULT_MODEL

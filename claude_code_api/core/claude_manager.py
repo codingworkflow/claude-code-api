@@ -4,7 +4,7 @@ import asyncio
 import json
 import os
 import subprocess
-from typing import Any, AsyncGenerator, Dict, List, Optional
+from typing import Any, AsyncGenerator, Callable, Dict, List, Optional
 
 import structlog
 
@@ -18,8 +18,15 @@ logger = structlog.get_logger()
 class ClaudeProcess:
     """Manages a single Claude Code process."""
 
-    def __init__(self, session_id: str, project_path: str):
+    def __init__(
+        self,
+        session_id: str,
+        project_path: str,
+        on_cli_session_id: Optional[Callable[[str], None]] = None,
+        on_end: Optional[Callable[["ClaudeProcess"], None]] = None,
+    ):
         self.session_id = session_id
+        self.cli_session_id: Optional[str] = None
         self.project_path = project_path
         self.process: Optional[asyncio.subprocess.Process] = None
         self.is_running = False
@@ -27,6 +34,8 @@ class ClaudeProcess:
         self.error_queue = asyncio.Queue()
         self._output_task: Optional[asyncio.Task] = None
         self._error_task: Optional[asyncio.Task] = None
+        self._on_cli_session_id = on_cli_session_id
+        self._on_end = on_end
 
     async def start(
         self, prompt: str, model: str = None, system_prompt: str = None
@@ -123,8 +132,9 @@ class ClaudeProcess:
                     logger.info(
                         "Extracted Claude session ID", session_id=claude_session_id
                     )
-                    # Update our session_id to match Claude's
-                    self.session_id = claude_session_id
+                    self.cli_session_id = claude_session_id
+                    if self._on_cli_session_id:
+                        self._on_cli_session_id(claude_session_id)
 
                 await self.output_queue.put(data)
         except Exception as e:
@@ -136,6 +146,8 @@ class ClaudeProcess:
             logger.info(
                 "Claude process output stream ended", session_id=self.session_id
             )
+            if self._on_end:
+                self._on_end(self)
 
     async def _read_error(self):
         """Read stderr from process."""
@@ -237,6 +249,7 @@ class ClaudeManager:
 
     def __init__(self):
         self.processes: Dict[str, ClaudeProcess] = {}
+        self.cli_session_index: Dict[str, str] = {}
         self.max_concurrent = settings.max_concurrent_sessions
 
     async def get_version(self) -> str:
@@ -273,6 +286,7 @@ class ClaudeManager:
         prompt: str,
         model: str = None,
         system_prompt: str = None,
+        on_cli_session_id: Optional[Callable[[str], None]] = None,
     ) -> ClaudeProcess:
         """Create new Claude session."""
         # Check concurrent session limit
@@ -285,7 +299,17 @@ class ClaudeManager:
         os.makedirs(project_path, exist_ok=True)
 
         # Create process
-        process = ClaudeProcess(session_id, project_path)
+        def _handle_cli_session_id(cli_session_id: str):
+            self._register_cli_session(session_id, cli_session_id)
+            if on_cli_session_id:
+                on_cli_session_id(cli_session_id)
+
+        process = ClaudeProcess(
+            session_id=session_id,
+            project_path=project_path,
+            on_cli_session_id=_handle_cli_session_id,
+            on_end=self._cleanup_process,
+        )
 
         # Start process
         success = await process.start(
@@ -297,12 +321,11 @@ class ClaudeManager:
         if not success:
             raise ClaudeProcessStartError("Failed to start Claude process")
 
-        # Don't store processes since Claude CLI completes immediately
-        # This prevents the "max concurrent sessions" error
+        self.processes[session_id] = process
 
         logger.info(
             "Claude session created",
-            session_id=process.session_id,  # Use Claude's actual session ID
+            session_id=process.session_id,
             active_sessions=len(self.processes),
         )
 
@@ -310,18 +333,22 @@ class ClaudeManager:
 
     def get_session(self, session_id: str) -> Optional[ClaudeProcess]:
         """Get existing Claude session."""
-        return self.processes.get(session_id)
+        resolved_id = self._resolve_session_id(session_id)
+        if not resolved_id:
+            return None
+        return self.processes.get(resolved_id)
 
     async def stop_session(self, session_id: str):
         """Stop Claude session."""
-        if session_id in self.processes:
-            process = self.processes[session_id]
+        resolved_id = self._resolve_session_id(session_id)
+        if resolved_id and resolved_id in self.processes:
+            process = self.processes[resolved_id]
             await process.stop()
-            del self.processes[session_id]
+            self._cleanup_process(process)
 
             logger.info(
                 "Claude session stopped",
-                session_id=session_id,
+                session_id=resolved_id,
                 active_sessions=len(self.processes),
             )
 
@@ -338,12 +365,32 @@ class ClaudeManager:
 
     async def continue_conversation(self, session_id: str, prompt: str) -> bool:
         """Continue existing conversation."""
-        process = self.processes.get(session_id)
+        resolved_id = self._resolve_session_id(session_id)
+        if not resolved_id:
+            return False
+        process = self.processes.get(resolved_id)
         if not process:
             return False
 
         await process.send_input(prompt)
         return True
+
+    def _register_cli_session(self, api_session_id: str, cli_session_id: str):
+        if not cli_session_id:
+            return
+        self.cli_session_index[cli_session_id] = api_session_id
+
+    def _resolve_session_id(self, session_id: str) -> Optional[str]:
+        if session_id in self.processes:
+            return session_id
+        return self.cli_session_index.get(session_id)
+
+    def _cleanup_process(self, process: ClaudeProcess):
+        api_session_id = process.session_id
+        if api_session_id in self.processes:
+            del self.processes[api_session_id]
+        if process.cli_session_id:
+            self.cli_session_index.pop(process.cli_session_id, None)
 
 
 # Utility functions for project management

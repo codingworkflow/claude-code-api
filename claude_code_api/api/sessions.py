@@ -177,7 +177,7 @@ async def delete_session(session_id: str, req: Request) -> JSONResponse:
     await claude_manager.stop_session(session_id)
 
     # End session
-    session_manager.end_session(session_id)
+    await session_manager.end_session(session_id)
 
     logger.info("Session deleted", session_id=session_id)
 

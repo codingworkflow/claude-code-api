@@ -37,6 +37,7 @@ def setup_test_environment():
         "claude_binary_path": getattr(settings, "claude_binary_path", "claude"),
         "database_url": getattr(settings, "database_url", "sqlite:///./test.db"),
         "debug": getattr(settings, "debug", False),
+        "session_map_path": getattr(settings, "session_map_path", None),
     }
 
     # Set test settings
@@ -105,6 +106,7 @@ def setup_test_environment():
 
     settings.database_url = f"sqlite:///{temp_dir}/test.db"
     settings.debug = True
+    settings.session_map_path = os.path.join(temp_dir, "session_map.json")
 
     # Create directories
     os.makedirs(settings.project_root, exist_ok=True)
