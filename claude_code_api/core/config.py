@@ -4,7 +4,7 @@ import os
 import shutil
 from typing import List, Union
 from pydantic import Field, field_validator
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 def find_claude_binary() -> str:
@@ -51,8 +51,50 @@ def find_claude_binary() -> str:
     return "claude"  # Final fallback
 
 
+def _looks_like_dotenv(path: str) -> bool:
+    """Return True when a file appears to be a simple KEY=VALUE dotenv file."""
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            for line in handle:
+                stripped = line.strip()
+                if not stripped or stripped.startswith("#"):
+                    continue
+                if stripped.startswith("#!") or stripped.startswith("set "):
+                    return False
+                if "BASH_SOURCE" in stripped or "[[" in stripped:
+                    return False
+                if stripped.startswith(("if ", "fi", "for ", "done", "source ")):
+                    return False
+                if stripped.startswith("export "):
+                    stripped = stripped[len("export "):].lstrip()
+                return "=" in stripped
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return False
+    return True
+
+
+def _resolve_env_file() -> str | None:
+    """Pick a dotenv file only when it is likely compatible."""
+    explicit = os.getenv("CLAUDE_CODE_API_ENV_FILE")
+    if explicit:
+        return explicit
+    for candidate in (".env.local", ".env"):
+        if os.path.exists(candidate) and _looks_like_dotenv(candidate):
+            return candidate
+    return None
+
+
 class Settings(BaseSettings):
     """Application settings."""
+
+    model_config = SettingsConfigDict(
+        env_file=_resolve_env_file(),
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",
+    )
     
     # API Configuration
     api_title: str = "Claude Code API Gateway"
@@ -77,7 +119,7 @@ class Settings(BaseSettings):
     # Claude Configuration  
     claude_binary_path: str = find_claude_binary()
     claude_api_key: str = ""
-    default_model: str = "claude-3-5-sonnet-20241022"
+    default_model: str = "claude-sonnet-4-5-20250929"
     max_concurrent_sessions: int = 10
     session_timeout_minutes: int = 30
     
@@ -112,11 +154,6 @@ class Settings(BaseSettings):
     streaming_chunk_size: int = 1024
     streaming_timeout_seconds: int = 300
     
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
-        case_sensitive = False
-
 
 # Create global settings instance
 settings = Settings()

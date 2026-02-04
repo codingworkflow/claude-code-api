@@ -1,34 +1,52 @@
 """Chat completions API endpoint - OpenAI compatible."""
 
-import uuid
 import json
-from datetime import datetime
 from typing import Dict, Any
 from fastapi import APIRouter, Request, HTTPException, status
-from fastapi.responses import StreamingResponse, JSONResponse
+from fastapi.responses import StreamingResponse
 from pydantic import ValidationError
 import structlog
 
 from claude_code_api.models.openai import (
     ChatCompletionRequest, 
     ChatCompletionResponse,
-    ChatCompletionChoice,
-    ChatMessage,
-    ChatCompletionUsage,
     ErrorResponse
 )
-from claude_code_api.models.claude import validate_claude_model, get_model_info
+from claude_code_api.models.claude import validate_claude_model
 from claude_code_api.core.claude_manager import create_project_directory
-from claude_code_api.core.session_manager import SessionManager, ConversationManager
+from claude_code_api.core.session_manager import SessionManager
 from claude_code_api.utils.streaming import create_sse_response, create_non_streaming_response
-from claude_code_api.utils.parser import ClaudeOutputParser, estimate_tokens
+from claude_code_api.utils.parser import ClaudeOutputParser, OpenAIConverter, estimate_tokens, normalize_claude_message
 
 logger = structlog.get_logger()
 router = APIRouter()
 
+CHAT_COMPLETION_RESPONSES = {
+    200: {
+        "description": "Chat completion response (JSON when stream=false, SSE when stream=true).",
+        "content": {
+            "application/json": {
+                "schema": {"$ref": "#/components/schemas/ChatCompletionResponse"}
+            },
+            "text/event-stream": {
+                "schema": {"$ref": "#/components/schemas/ChatCompletionChunk"}
+            }
+        }
+    },
+    400: {"model": ErrorResponse},
+    422: {"model": ErrorResponse},
+    503: {"model": ErrorResponse},
+    500: {"model": ErrorResponse}
+}
 
-@router.post("/chat/completions")
+
+@router.post(
+    "/chat/completions",
+    response_model=ChatCompletionResponse,
+    responses=CHAT_COMPLETION_RESPONSES
+)
 async def create_chat_completion(
+    request: ChatCompletionRequest,
     req: Request
 ) -> Any:
     """Create a chat completion, compatible with OpenAI API."""
@@ -44,30 +62,6 @@ async def create_chat_completion(
             user_agent=req.headers.get("user-agent", "unknown"),
             raw_body=raw_body.decode()[:1000] if raw_body else "empty"
         )
-        
-        # Parse JSON manually to see validation errors
-        if raw_body:
-            try:
-                json_data = json.loads(raw_body.decode())
-                logger.info("JSON parsed successfully", data_keys=list(json_data.keys()))
-            except json.JSONDecodeError as e:
-                logger.error("JSON decode error", error=str(e))
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail={"error": {"message": f"Invalid JSON: {str(e)}", "type": "invalid_request_error"}}
-                )
-        
-        # Try to validate with Pydantic
-        try:
-            request = ChatCompletionRequest(**json_data)
-            logger.info("Pydantic validation successful")
-        except ValidationError as e:
-            logger.error("Pydantic validation failed", error=str(e), errors=e.errors())
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail={"error": {"message": f"Validation error: {str(e)}", "type": "invalid_request_error", "details": e.errors()}}
-            )
-        
     except HTTPException:
         raise
     except Exception as e:
@@ -97,7 +91,6 @@ async def create_chat_completion(
     try:
         # Validate model
         claude_model = validate_claude_model(request.model)
-        model_info = get_model_info(claude_model)
         
         # Validate message format
         if not request.messages:
@@ -204,10 +197,11 @@ async def create_chat_completion(
             # Return streaming response
             return StreamingResponse(
                 create_sse_response(claude_session_id, claude_model, claude_process),
-                media_type="text/plain",
+                media_type="text/event-stream",
                 headers={
                     "Cache-Control": "no-cache",
                     "Connection": "keep-alive",
+                    "X-Accel-Buffering": "no",
                     "X-Session-ID": claude_session_id,
                     "X-Project-ID": project_id
                 }
@@ -215,6 +209,7 @@ async def create_chat_completion(
         else:
             # Collect all output for non-streaming response
             messages = []
+            parser = ClaudeOutputParser()
             
             async for claude_message in claude_process.get_output():
                 # Log each message from Claude
@@ -229,15 +224,11 @@ async def create_chat_completion(
                 )
                 
                 messages.append(claude_message)
-                
-                # Check if it's a final message by looking at dict structure
-                is_final = False
-                if isinstance(claude_message, dict):
-                    is_final = claude_message.get("type") == "result"
-                
-                # Stop on final message or after a reasonable number of messages
-                if is_final or len(messages) > 10:  # Safety limit for testing
-                    break
+                normalized = normalize_claude_message(claude_message)
+                if normalized:
+                    parser.parse_message(normalized)
+                    if parser.is_final_message(normalized):
+                        break
             
             # Log what we collected
             logger.info(
@@ -246,12 +237,11 @@ async def create_chat_completion(
                 message_types=[msg.get("type") if isinstance(msg, dict) else type(msg).__name__ for msg in messages]
             )
             
-            # Simple usage tracking without parsing Claude internals
-            usage_summary = {"total_tokens": 50, "total_cost": 0.001}
+            usage_summary = OpenAIConverter.calculate_usage(parser)
             await session_manager.update_session(
                 session_id=claude_session_id,
-                tokens_used=50,
-                cost=0.001
+                tokens_used=usage_summary.get("total_tokens", 0),
+                cost=parser.total_cost
             )
             
             # Create non-streaming response
@@ -259,7 +249,7 @@ async def create_chat_completion(
                 messages=messages,
                 session_id=claude_session_id,
                 model=claude_model,
-                usage_summary=usage_summary
+                usage=usage_summary
             )
             
             # Add extension fields
@@ -273,7 +263,7 @@ async def create_chat_completion(
                 has_choices_0=bool(response.get("choices") and len(response["choices"]) > 0),
                 choices_0_keys=list(response["choices"][0].keys()) if response.get("choices") and len(response["choices"]) > 0 else [],
                 message_keys=list(response["choices"][0]["message"].keys()) if response.get("choices") and len(response["choices"]) > 0 and "message" in response["choices"][0] else [],
-                content_length=len(response["choices"][0]["message"].get("content", "")) if response.get("choices") and len(response["choices"]) > 0 and "message" in response["choices"][0] else 0,
+                content_length=len((response["choices"][0]["message"].get("content") or "")) if response.get("choices") and len(response["choices"]) > 0 and "message" in response["choices"][0] else 0,
                 full_response_keys=list(response.keys()),
                 response_size=len(str(response))
             )

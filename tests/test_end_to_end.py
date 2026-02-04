@@ -20,6 +20,19 @@ import os
 import tempfile
 import shutil
 
+
+def parse_sse_events(body_text: str) -> List[Dict[str, Any]]:
+    """Parse SSE events from a streaming response body."""
+    events = []
+    for line in body_text.splitlines():
+        if not line.startswith("data: "):
+            continue
+        payload = line[6:]
+        if payload == "[DONE]":
+            break
+        events.append(json.loads(payload))
+    return events
+
 # Import the FastAPI app
 import sys
 from pathlib import Path
@@ -30,6 +43,11 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from claude_code_api.main import app
 from claude_code_api.core.config import settings
+from claude_code_api.models.claude import get_available_models, get_default_model
+
+
+AVAILABLE_MODELS = get_available_models()
+DEFAULT_MODEL = get_default_model()
 
 
 class TestConfig:
@@ -129,11 +147,12 @@ class TestModelsAPI:
     def test_get_specific_model(self, client):
         """Test getting specific model."""
         # Test Claude model
-        response = client.get("/v1/models/claude-3-5-haiku-20241022")
+        model_id = AVAILABLE_MODELS[0].id
+        response = client.get(f"/v1/models/{model_id}")
         assert response.status_code == 200
         
         data = response.json()
-        assert data["id"] == "claude-3-5-haiku-20241022"
+        assert data["id"] == model_id
         assert data["object"] == "model"
     
     def test_get_openai_alias_model(self, client):
@@ -162,7 +181,7 @@ class TestChatCompletions:
     def test_simple_chat_completion_non_streaming(self, client):
         """Test simple non-streaming chat completion."""
         request_data = {
-            "model": "claude-3-5-haiku-20241022",
+            "model": DEFAULT_MODEL,
             "messages": [
                 {"role": "user", "content": "Hi"}
             ],
@@ -176,7 +195,7 @@ class TestChatCompletions:
         assert "id" in data
         assert data["object"] == "chat.completion"
         assert "created" in data
-        assert data["model"] == "claude-3-5-haiku-20241022"
+        assert data["model"] == DEFAULT_MODEL
         assert "choices" in data
         assert len(data["choices"]) > 0
         
@@ -190,7 +209,7 @@ class TestChatCompletions:
     def test_chat_completion_with_system_prompt(self, client):
         """Test chat completion with system prompt."""
         request_data = {
-            "model": "claude-3-5-haiku-20241022",
+            "model": DEFAULT_MODEL,
             "messages": [
                 {"role": "system", "content": "You are a helpful assistant."},
                 {"role": "user", "content": "Hello, how are you?"}
@@ -202,7 +221,7 @@ class TestChatCompletions:
         assert response.status_code == 200
         
         data = response.json()
-        assert data["model"] == "claude-3-5-haiku-20241022"
+        assert data["model"] == DEFAULT_MODEL
         assert len(data["choices"]) > 0
     
     def test_chat_completion_with_invalid_model_fallback(self, client):
@@ -222,7 +241,7 @@ class TestChatCompletions:
     def test_chat_completion_streaming(self, client):
         """Test streaming chat completion."""
         request_data = {
-            "model": "claude-3-5-haiku-20241022",
+            "model": DEFAULT_MODEL,
             "messages": [
                 {"role": "user", "content": "Tell me a short joke"}
             ],
@@ -231,17 +250,60 @@ class TestChatCompletions:
         
         response = client.post("/v1/chat/completions", json=request_data)
         assert response.status_code == 200
-        assert response.headers["content-type"] == "text/plain; charset=utf-8"
+        assert "text/event-stream" in response.headers["content-type"]
         
         # Check that we get streaming data
         content = response.text
         assert "data: " in content
-        assert "event: " in content or "[DONE]" in content
+        assert "[DONE]" in content
+        events = parse_sse_events(content)
+        assert any(event.get("object") == "chat.completion.chunk" for event in events)
+
+    def test_chat_completion_with_tool_calls(self, client):
+        """Test chat completion that includes tool calls."""
+        request_data = {
+            "model": DEFAULT_MODEL,
+            "messages": [
+                {"role": "user", "content": "Please use a tool to list files"}
+            ],
+            "stream": False
+        }
+        
+        response = client.post("/v1/chat/completions", json=request_data)
+        assert response.status_code == 200
+        
+        data = response.json()
+        choice = data["choices"][0]
+        message = choice["message"]
+        assert "tool_calls" in message
+        assert len(message["tool_calls"]) > 0
+        assert message["tool_calls"][0]["function"]["name"] == "bash"
+
+    def test_chat_completion_streaming_tool_calls(self, client):
+        """Test streaming tool call deltas."""
+        request_data = {
+            "model": DEFAULT_MODEL,
+            "messages": [
+                {"role": "user", "content": "Please use a tool to list files"}
+            ],
+            "stream": True
+        }
+        
+        response = client.post("/v1/chat/completions", json=request_data)
+        assert response.status_code == 200
+        assert "text/event-stream" in response.headers["content-type"]
+
+        events = parse_sse_events(response.text)
+        assert any(
+            choice.get("delta", {}).get("tool_calls")
+            for event in events
+            for choice in event.get("choices", [])
+        )
     
     def test_chat_completion_with_project_context(self, client):
         """Test chat completion with project context."""
         request_data = {
-            "model": "claude-3-5-sonnet-20241022",
+            "model": DEFAULT_MODEL,
             "messages": [
                 {"role": "user", "content": "Hi, I'm working on a Python project"}
             ],
@@ -259,7 +321,7 @@ class TestChatCompletions:
     def test_chat_completion_missing_messages(self, client):
         """Test chat completion with missing messages."""
         request_data = {
-            "model": "claude-3-5-sonnet-20241022",
+            "model": DEFAULT_MODEL,
             "messages": [],
             "stream": False
         }
@@ -274,7 +336,7 @@ class TestChatCompletions:
     def test_chat_completion_no_user_message(self, client):
         """Test chat completion with no user message."""
         request_data = {
-            "model": "claude-3-5-sonnet-20241022",
+            "model": DEFAULT_MODEL,
             "messages": [
                 {"role": "system", "content": "You are a helpful assistant."}
             ],
@@ -310,7 +372,7 @@ class TestConversationFlow:
         """Test conversation continuity across messages."""
         # First message
         request_data_1 = {
-            "model": "claude-3-5-sonnet-20241022", 
+            "model": DEFAULT_MODEL, 
             "messages": [
                 {"role": "user", "content": "My name is Alice"}
             ],
@@ -326,7 +388,7 @@ class TestConversationFlow:
         if session_id:
             # Follow-up message in same session
             request_data_2 = {
-                "model": "claude-3-5-sonnet-20241022",
+                "model": DEFAULT_MODEL,
                 "messages": [
                     {"role": "user", "content": "My name is Alice"},
                     {"role": "assistant", "content": data_1["choices"][0]["message"]["content"]},
@@ -342,7 +404,7 @@ class TestConversationFlow:
     def test_multiple_user_messages(self, client):
         """Test handling multiple user messages."""
         request_data = {
-            "model": "claude-3-5-sonnet-20241022",
+            "model": DEFAULT_MODEL,
             "messages": [
                 {"role": "user", "content": "Hi"},
                 {"role": "user", "content": "How are you doing today?"}
@@ -435,7 +497,7 @@ class TestSessionsAPI:
         session_data = {
             "project_id": "test-project",
             "title": "Test Session",
-            "model": "claude-3-5-sonnet-20241022"
+            "model": DEFAULT_MODEL
         }
         
         response = client.post("/v1/sessions", json=session_data)
@@ -443,7 +505,7 @@ class TestSessionsAPI:
         
         data = response.json()
         assert data["project_id"] == "test-project"
-        assert data["model"] == "claude-3-5-sonnet-20241022"
+        assert data["model"] == DEFAULT_MODEL
         assert "id" in data
         assert "created_at" in data
     
@@ -485,7 +547,7 @@ class TestErrorHandling:
     def test_invalid_message_role(self, client):
         """Test handling of invalid message role."""
         request_data = {
-            "model": "claude-3-5-sonnet-20241022",
+            "model": DEFAULT_MODEL,
             "messages": [
                 {"role": "invalid_role", "content": "Hi"}
             ]
@@ -501,7 +563,7 @@ class TestRealWorldScenarios:
     def test_simple_greeting(self, client):
         """Test simple greeting - most common use case."""
         request_data = {
-            "model": "claude-3-5-haiku-20241022",
+            "model": DEFAULT_MODEL,
             "messages": [
                 {"role": "user", "content": "Hi"}
             ]
@@ -521,7 +583,7 @@ class TestRealWorldScenarios:
     def test_code_generation_request(self, client):
         """Test code generation request."""
         request_data = {
-            "model": "claude-3-5-haiku-20241022",
+            "model": DEFAULT_MODEL,
             "messages": [
                 {"role": "user", "content": "Write a Python function to calculate fibonacci numbers"}
             ]
@@ -539,7 +601,7 @@ class TestRealWorldScenarios:
         """Test multi-turn conversation simulation."""
         # Simulate a multi-turn conversation in a single request
         request_data = {
-            "model": "claude-3-5-haiku-20241022",
+            "model": DEFAULT_MODEL,
             "messages": [
                 {"role": "user", "content": "Hi, I'm learning Python"},
                 {"role": "assistant", "content": "Hello! That's great that you're learning Python. It's an excellent programming language for beginners and professionals alike. What specifically would you like to know about Python?"},

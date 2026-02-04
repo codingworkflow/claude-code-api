@@ -1,17 +1,13 @@
 """Claude Code specific models and utilities."""
 
 from datetime import datetime
+from functools import lru_cache
+from pathlib import Path
 from typing import List, Optional, Dict, Any, Union, Literal
-from pydantic import BaseModel, Field
+import json
+import os
 from enum import Enum
-
-
-class ClaudeModel(str, Enum):
-    """Available Claude models - matching Claude Code CLI supported models."""
-    OPUS_4 = "claude-opus-4-20250514"
-    SONNET_4 = "claude-sonnet-4-20250514"
-    SONNET_37 = "claude-3-7-sonnet-20250219"
-    HAIKU_35 = "claude-3-5-haiku-20241022"
+from pydantic import BaseModel, Field
 
 
 class ClaudeMessageType(str, Enum):
@@ -70,6 +66,10 @@ class ClaudeToolResult(BaseModel):
     is_error: Optional[bool] = Field(False, description="Whether this is an error result")
 
 
+def _default_model_factory() -> str:
+    return get_default_model()
+
+
 class ClaudeSessionInfo(BaseModel):
     """Claude session information."""
     session_id: str = Field(..., description="Session ID")
@@ -125,7 +125,7 @@ class ClaudeProjectConfig(BaseModel):
     project_id: str = Field(..., description="Project ID")
     name: str = Field(..., description="Project name")
     path: str = Field(..., description="Project path")
-    default_model: str = Field(ClaudeModel.HAIKU_35, description="Default model")
+    default_model: str = Field(default_factory=_default_model_factory, description="Default model")
     system_prompt: Optional[str] = Field(None, description="Default system prompt")
     tools_enabled: List[ClaudeToolType] = Field(default_factory=list, description="Enabled tools")
     max_tokens: Optional[int] = Field(None, description="Maximum tokens per request")
@@ -194,72 +194,70 @@ class ClaudeModelInfo(BaseModel):
     supports_tools: bool = Field(True, description="Whether model supports tool use")
 
 
+MODELS_CONFIG_ENV = "CLAUDE_CODE_API_MODELS_PATH"
+DEFAULT_MODELS_PATH = Path(__file__).resolve().parents[1] / "config" / "models.json"
+
+
+def _models_config_path() -> Path:
+    env_path = os.getenv(MODELS_CONFIG_ENV)
+    if env_path:
+        return Path(env_path).expanduser()
+    return DEFAULT_MODELS_PATH
+
+
+@lru_cache
+def _load_models_config() -> Dict[str, Any]:
+    path = _models_config_path()
+    if not path.exists():
+        raise FileNotFoundError(
+            f"Models config not found at {path}. Set {MODELS_CONFIG_ENV} to override."
+        )
+    with path.open("r", encoding="utf-8") as handle:
+        data = json.load(handle)
+    if not isinstance(data, dict) or "models" not in data:
+        raise ValueError("Models config must contain a top-level 'models' list.")
+    return data
+
+
+def _model_index() -> Dict[str, ClaudeModelInfo]:
+    config = _load_models_config()
+    models = config.get("models", [])
+    model_map: Dict[str, ClaudeModelInfo] = {}
+    for entry in models:
+        info = ClaudeModelInfo(**entry)
+        model_map[info.id] = info
+    return model_map
+
+
 # Utility functions for model validation
 def validate_claude_model(model: str) -> str:
     """Validate and normalize Claude model name."""
-    # Direct Claude model names
-    valid_models = [model.value for model in ClaudeModel]
-    
-    if model in valid_models:
+    model_map = _model_index()
+    if model in model_map:
         return model
-    
-    # Default to Haiku for testing
-    return ClaudeModel.HAIKU_35
+    return get_default_model()
 
 
 def get_default_model() -> str:
     """Get the default Claude model."""
-    return ClaudeModel.HAIKU_35
+    config = _load_models_config()
+    default_model = config.get("default_model")
+    if isinstance(default_model, str) and default_model:
+        return default_model
+    model_map = _model_index()
+    if model_map:
+        return next(iter(model_map.keys()))
+    raise ValueError("Models config did not contain any models.")
 
 
 def get_model_info(model_id: str) -> ClaudeModelInfo:
     """Get information about a Claude model."""
-    model_info = {
-        ClaudeModel.OPUS_4: ClaudeModelInfo(
-            id=ClaudeModel.OPUS_4,
-            name="Claude Opus 4",
-            description="Most powerful Claude model for complex reasoning",
-            max_tokens=500000,
-            input_cost_per_1k=15.0,
-            output_cost_per_1k=75.0,
-            supports_streaming=True,
-            supports_tools=True
-        ),
-        ClaudeModel.SONNET_4: ClaudeModelInfo(
-            id=ClaudeModel.SONNET_4,
-            name="Claude Sonnet 4",
-            description="Latest Sonnet model with enhanced capabilities",
-            max_tokens=500000,
-            input_cost_per_1k=3.0,
-            output_cost_per_1k=15.0,
-            supports_streaming=True,
-            supports_tools=True
-        ),
-        ClaudeModel.SONNET_37: ClaudeModelInfo(
-            id=ClaudeModel.SONNET_37,
-            name="Claude Sonnet 3.7",
-            description="Advanced Sonnet model for complex tasks",
-            max_tokens=200000,
-            input_cost_per_1k=3.0,
-            output_cost_per_1k=15.0,
-            supports_streaming=True,
-            supports_tools=True
-        ),
-        ClaudeModel.HAIKU_35: ClaudeModelInfo(
-            id=ClaudeModel.HAIKU_35,
-            name="Claude Haiku 3.5",
-            description="Fast and cost-effective model for quick tasks",
-            max_tokens=200000,
-            input_cost_per_1k=0.25,
-            output_cost_per_1k=1.25,
-            supports_streaming=True,
-            supports_tools=True
-        )
-    }
-    
-    return model_info.get(model_id, model_info[ClaudeModel.HAIKU_35])
+    model_map = _model_index()
+    if model_id in model_map:
+        return model_map[model_id]
+    return model_map[get_default_model()]
 
 
 def get_available_models() -> List[ClaudeModelInfo]:
     """Get list of all available Claude models."""
-    return [get_model_info(model) for model in ClaudeModel]
+    return list(_model_index().values())

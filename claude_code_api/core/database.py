@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sess
 import structlog
 
 from .config import settings
+from claude_code_api.models.claude import get_default_model
 
 logger = structlog.get_logger()
 
@@ -53,7 +54,7 @@ class Session(Base):
     id = Column(String, primary_key=True)
     project_id = Column(String, ForeignKey("projects.id"), nullable=False)
     title = Column(String)
-    model = Column(String, default=settings.default_model)
+    model = Column(String, default=get_default_model)
     system_prompt = Column(Text)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

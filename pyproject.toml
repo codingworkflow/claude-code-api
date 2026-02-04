@@ -71,6 +71,9 @@ claude-code-api = "claude_code_api.main:main"
 where = ["."]
 include = ["claude_code_api*"]
 
+[tool.setuptools.package-data]
+claude_code_api = ["config/*.json"]
+
 [tool.pytest.ini_options]
 minversion = "7.0"
 addopts = "-ra -q --strict-markers --strict-config"

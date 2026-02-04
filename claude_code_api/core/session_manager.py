@@ -7,6 +7,7 @@ from typing import Dict, List, Optional, Any
 import structlog
 
 from claude_code_api.core.config import settings
+from claude_code_api.models.claude import get_default_model
 from claude_code_api.core.database import db_manager, Session, Message
 from claude_code_api.core.claude_manager import ClaudeProcess
 
@@ -74,7 +75,7 @@ class SessionManager:
         session_info = SessionInfo(
             session_id=session_id,
             project_id=project_id,
-            model=model or settings.default_model,
+            model=model or get_default_model(),
             system_prompt=system_prompt
         )
         

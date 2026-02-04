@@ -1,0 +1,17 @@
+[
+  {
+    "match": [
+      "list files",
+      "list the files",
+      "use a tool"
+    ],
+    "file": "claude_stream_tool_calls.jsonl"
+  },
+  {
+    "match": [
+      "hi",
+      "hello"
+    ],
+    "file": "claude_stream_simple.jsonl"
+  }
+]

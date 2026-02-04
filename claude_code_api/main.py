@@ -10,7 +10,8 @@ import logging
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, status
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import structlog
@@ -24,6 +25,7 @@ from claude_code_api.api.models import router as models_router
 from claude_code_api.api.projects import router as projects_router
 from claude_code_api.api.sessions import router as sessions_router
 from claude_code_api.core.auth import auth_middleware
+from claude_code_api.models.openai import ChatCompletionChunk
 
 
 # Configure structured logging
@@ -91,6 +93,40 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+
+def custom_openapi():
+    """Extend OpenAPI schema with streaming chunk models."""
+    if app.openapi_schema:
+        return app.openapi_schema
+    from fastapi.openapi.utils import get_openapi
+
+    schema = get_openapi(
+        title=app.title,
+        version=app.version,
+        description=app.description,
+        routes=app.routes
+    )
+
+    components = schema.setdefault("components", {}).setdefault("schemas", {})
+    chunk_schema = ChatCompletionChunk.model_json_schema(
+        ref_template="#/components/schemas/{model}"
+    )
+    defs = chunk_schema.pop("$defs", {})
+    for name, definition in defs.items():
+        components.setdefault(name, definition)
+    components.setdefault("ChatCompletionChunk", chunk_schema)
+    if "ChatMessage" not in components:
+        if "ChatMessage-Input" in components:
+            components["ChatMessage"] = components["ChatMessage-Input"]
+        elif "ChatMessage-Output" in components:
+            components["ChatMessage"] = components["ChatMessage-Output"]
+
+    app.openapi_schema = schema
+    return app.openapi_schema
+
+
+app.openapi = custom_openapi
+
 # CORS middleware
 app.add_middleware(
     CORSMiddleware,
@@ -115,6 +151,26 @@ async def http_exception_handler(request, exc):
     return JSONResponse(
         status_code=exc.status_code,
         content={"detail": exc.detail}
+    )
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request, exc):
+    """Return OpenAI-style errors for validation failures."""
+    status_code = status.HTTP_422_UNPROCESSABLE_ENTITY
+    for error in exc.errors():
+        if error.get("type") in {"value_error.jsondecode", "json_invalid"}:
+            status_code = status.HTTP_400_BAD_REQUEST
+            break
+    return JSONResponse(
+        status_code=status_code,
+        content={
+            "error": {
+                "message": "Validation error",
+                "type": "invalid_request_error",
+                "details": exc.errors()
+            }
+        }
     )
 
 

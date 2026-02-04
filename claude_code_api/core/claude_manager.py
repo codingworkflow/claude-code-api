@@ -11,6 +11,7 @@ from typing import Optional, Dict, List, AsyncGenerator, Any
 import structlog
 
 from .config import settings
+from claude_code_api.models.claude import get_default_model
 
 logger = structlog.get_logger()
 
@@ -56,7 +57,7 @@ class ClaudeProcess:
                 "Starting Claude process",
                 session_id=self.session_id,
                 project_path=self.project_path,
-                model=model or settings.default_model
+                model=model or get_default_model()
             )
             
             # Start process from src directory (where Claude works without API key)
@@ -104,7 +105,10 @@ class ClaudeProcess:
                     continue
 
                 try:
-                    data = json.loads(line_text)
+                    payload = line_text
+                    if payload.startswith("data: "):
+                        payload = payload[6:].strip()
+                    data = json.loads(payload)
                     # Extract Claude's session ID from the first message
                     if not claude_session_id and data.get("session_id"):
                         claude_session_id = data["session_id"]
@@ -272,7 +276,7 @@ class ClaudeManager:
         # Start process
         success = await process.start(
             prompt=prompt,
-            model=model or settings.default_model,
+            model=model or get_default_model(),
             system_prompt=system_prompt,
             resume_session=resume_session
         )

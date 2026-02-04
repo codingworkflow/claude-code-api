@@ -72,12 +72,7 @@ async def create_project(
     # Create project directory
     if project_request.path:
         # Validate path
-        try:
-            project_path = validate_path(project_request.path, settings.project_root)
-        try:
-            project_path = validate_path(project_request.path, settings.project_root)
-        except HTTPException:
-            raise
+        project_path = validate_path(project_request.path, settings.project_root)
 
         os.makedirs(project_path, exist_ok=True)
     else:

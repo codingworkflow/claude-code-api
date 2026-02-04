@@ -7,8 +7,12 @@ from datetime import datetime
 from typing import AsyncGenerator, Dict, Any, Optional
 import structlog
 
-from claude_code_api.models.claude import ClaudeMessage
-from claude_code_api.utils.parser import ClaudeOutputParser, OpenAIConverter, MessageAggregator
+from claude_code_api.utils.parser import (
+    ClaudeOutputParser,
+    OpenAIConverter,
+    normalize_claude_message,
+    tool_use_to_openai_call
+)
 from claude_code_api.core.claude_manager import ClaudeProcess
 
 logger = structlog.get_logger()
@@ -60,6 +64,8 @@ class OpenAIStreamConverter:
         self.completion_id = f"chatcmpl-{uuid.uuid4().hex[:29]}"
         self.created = int(datetime.utcnow().timestamp())
         self.chunk_index = 0
+        self.parser = ClaudeOutputParser()
+        self.tool_call_index = 0
         
     async def convert_stream(
         self, 
@@ -81,62 +87,65 @@ class OpenAIStreamConverter:
             }
             yield SSEFormatter.format_event(initial_chunk)
             
-            assistant_started = False
-            last_content = ""
-            chunk_count = 0
-            max_chunks = 5  # Limit chunks for better UX
+            saw_assistant_text = False
+            saw_tool_calls = False
             
             # Process Claude output
             async for claude_message in claude_process.get_output():
-                chunk_count += 1
-                if chunk_count > max_chunks:
-                    logger.info("Reached max chunks limit, terminating stream")
-                    break
                 try:
-                    # Simple: just look for assistant messages in the dict
-                    if isinstance(claude_message, dict):
-                        if (claude_message.get("type") == "assistant" and 
-                            claude_message.get("message", {}).get("content")):
-                            
-                            message_content = claude_message["message"]["content"]
-                            text_content = ""
-                            
-                            # Handle content array format: [{"type":"text","text":"..."}]
-                            if isinstance(message_content, list):
-                                for content_item in message_content:
-                                    if (isinstance(content_item, dict) and 
-                                        content_item.get("type") == "text" and 
-                                        content_item.get("text")):
-                                        text_content = content_item["text"]
-                                        break
-                            # Handle simple string content
-                            elif isinstance(message_content, str):
-                                text_content = message_content
-                            
-                            if text_content.strip():
-                                chunk = {
-                                    "id": self.completion_id,
-                                    "object": "chat.completion.chunk",
-                                    "created": self.created,
-                                    "model": self.model,
-                                    "choices": [{
-                                        "index": 0,
-                                        "delta": {"content": text_content},
-                                        "finish_reason": None
-                                    }]
-                                }
-                                yield SSEFormatter.format_event(chunk)
-                                assistant_started = True
-                        
-                        # Stop on result type
-                        if claude_message.get("type") == "result":
-                            break
+                    message = normalize_claude_message(claude_message)
+                    if not message:
+                        continue
+                    self.parser.parse_message(message)
+
+                    if self.parser.is_assistant_message(message):
+                        text_content = self.parser.extract_text_content(message).strip()
+                        if text_content:
+                            chunk = {
+                                "id": self.completion_id,
+                                "object": "chat.completion.chunk",
+                                "created": self.created,
+                                "model": self.model,
+                                "choices": [{
+                                    "index": 0,
+                                    "delta": {"content": text_content},
+                                    "finish_reason": None
+                                }]
+                            }
+                            yield SSEFormatter.format_event(chunk)
+                            saw_assistant_text = True
+
+                        tool_uses = self.parser.extract_tool_uses(message)
+                        if tool_uses:
+                            tool_calls = []
+                            for tool_use in tool_uses:
+                                call = tool_use_to_openai_call(tool_use)
+                                call["index"] = self.tool_call_index
+                                self.tool_call_index += 1
+                                tool_calls.append(call)
+                            tool_chunk = {
+                                "id": self.completion_id,
+                                "object": "chat.completion.chunk",
+                                "created": self.created,
+                                "model": self.model,
+                                "choices": [{
+                                    "index": 0,
+                                    "delta": {"tool_calls": tool_calls},
+                                    "finish_reason": None
+                                }]
+                            }
+                            yield SSEFormatter.format_event(tool_chunk)
+                            saw_tool_calls = True
+
+                    if self.parser.is_final_message(message):
+                        break
                         
                 except Exception as e:
                     logger.error("Error processing Claude message", error=str(e))
                     continue
             
             # Send final chunk
+            finish_reason = "tool_calls" if (saw_tool_calls and not saw_assistant_text) else "stop"
             final_chunk = {
                 "id": self.completion_id,
                 "object": "chat.completion.chunk",
@@ -145,7 +154,7 @@ class OpenAIStreamConverter:
                 "choices": [{
                     "index": 0,
                     "delta": {},
-                    "finish_reason": "stop"
+                    "finish_reason": finish_reason
                 }]
             }
             yield SSEFormatter.format_event(final_chunk)
@@ -332,7 +341,7 @@ def create_non_streaming_response(
     messages: list,
     session_id: str,
     model: str,
-    usage_summary: Dict[str, Any]
+    usage: Optional[Dict[str, Any]] = None
 ) -> Dict[str, Any]:
     """Create non-streaming response."""
     completion_id = f"chatcmpl-{uuid.uuid4().hex[:29]}"
@@ -346,50 +355,42 @@ def create_non_streaming_response(
         completion_id=completion_id
     )
     
+    parser = ClaudeOutputParser()
+    tool_calls = []
     # Extract assistant content from Claude messages
     content_parts = []
     for i, msg in enumerate(messages):
+        normalized = normalize_claude_message(msg)
+        if not normalized:
+            continue
+        parser.parse_message(normalized)
         logger.info(
             f"Processing message {i}",
-            msg_type=msg.get("type") if isinstance(msg, dict) else type(msg).__name__,
-            msg_keys=list(msg.keys()) if isinstance(msg, dict) else [],
-            is_assistant=isinstance(msg, dict) and msg.get("type") == "assistant"
+            msg_type=normalized.type,
+            msg_keys=list(normalized.model_dump().keys()),
+            is_assistant=parser.is_assistant_message(normalized)
         )
         
-        if isinstance(msg, dict):
-            # Handle dict messages directly
-            if msg.get("type") == "assistant" and msg.get("message"):
-                message_content = msg["message"].get("content", [])
-                
-                logger.info(
-                    f"Found assistant message {i}",
-                    content_type=type(message_content).__name__,
-                    content_preview=str(message_content)[:100] if message_content else "empty"
-                )
-                
-                # Handle content array format: [{"type":"text","text":"..."}]
-                if isinstance(message_content, list):
-                    for content_item in message_content:
-                        if isinstance(content_item, dict) and content_item.get("type") == "text":
-                            text = content_item.get("text", "").strip()
-                            if text:
-                                content_parts.append(text)
-                                logger.info(f"Extracted text from array: {text[:50]}...")
-                # Handle simple string content
-                elif isinstance(message_content, str) and message_content.strip():
-                    text = message_content.strip()
-                    content_parts.append(text)
-                    logger.info(f"Extracted text from string: {text[:50]}...")
+        if parser.is_assistant_message(normalized):
+            text_content = parser.extract_text_content(normalized).strip()
+            logger.info(
+                f"Found assistant message {i}",
+                content_length=len(text_content),
+                content_preview=text_content[:100] if text_content else "empty"
+            )
+            if text_content:
+                content_parts.append(text_content)
+                logger.info(f"Extracted assistant text: {text_content[:50]}...")
+
+            tool_uses = parser.extract_tool_uses(normalized)
+            for tool_use in tool_uses:
+                tool_calls.append(tool_use_to_openai_call(tool_use))
     
-    # Use the actual content or fallback - ensure we always have content
+    # Use the actual content or fallback
     if content_parts:
         complete_content = "\n".join(content_parts).strip()
     else:
-        complete_content = "Hello! I'm Claude, ready to help."
-    
-    # Ensure content is never empty
-    if not complete_content:
-        complete_content = "Response received but content was empty."
+        complete_content = ""
     
     logger.info(
         "Final response content",
@@ -399,6 +400,18 @@ def create_non_streaming_response(
     )
     
     # Return simple OpenAI-compatible response with basic usage stats
+    if usage is None:
+        usage = OpenAIConverter.calculate_usage(parser)
+
+    finish_reason = "tool_calls" if (tool_calls and not complete_content) else "stop"
+
+    message_payload: Dict[str, Any] = {
+        "role": "assistant",
+        "content": complete_content or None
+    }
+    if tool_calls:
+        message_payload["tool_calls"] = tool_calls
+
     response = {
         "id": completion_id,
         "object": "chat.completion",
@@ -406,16 +419,13 @@ def create_non_streaming_response(
         "model": model,
         "choices": [{
             "index": 0,
-            "message": {
-                "role": "assistant",
-                "content": complete_content
-            },
-            "finish_reason": "stop"
+            "message": message_payload,
+            "finish_reason": finish_reason
         }],
         "usage": {
-            "prompt_tokens": 10,
-            "completion_tokens": len(complete_content.split()) if complete_content else 5,
-            "total_tokens": 10 + (len(complete_content.split()) if complete_content else 5)
+            "prompt_tokens": usage.get("prompt_tokens", 0),
+            "completion_tokens": usage.get("completion_tokens", 0),
+            "total_tokens": usage.get("total_tokens", 0)
         },
         "session_id": session_id
     }
@@ -424,7 +434,7 @@ def create_non_streaming_response(
         "Response created successfully",
         response_id=response["id"],
         choices_count=len(response["choices"]),
-        message_content_length=len(response["choices"][0]["message"]["content"])
+        message_content_length=len(response["choices"][0]["message"]["content"] or "")
     )
     
     return response

@@ -124,13 +124,39 @@ celerybeat.pid
 *.sage.py
 
 # Environments
-.env
+.env.vault
+.env.cloud
 .venv
 env/
 venv/
 ENV/
 env.bak/
 venv.bak/
+
+# SonarQube scanner working directory
+dist/quality/sonar/scannerwork/
+
+# Quality and Security Artifacts
+dist/quality/
+dist/security/
+dist/artifacts/
+
+# Gitleaks reports
+*.gitleaks-report.json
+gitleaks-report.json
+
+# SBOM reports
+*.sbom.json
+sbom.json
+cyclonedx-*.json
+
+# Renovate reports
+renovate-report.json
+renovate-summary-*.txt
+
+# Semgrep reports
+semgrep-report*.json
+semgrep-report*.sarif
 
 # Spyder project settings
 .spyderproject

@@ -1,0 +1,5 @@
+{"type":"system","message":{"role":"system","content":[{"type":"text","text":"You are Claude Code."}]},"session_id":"sess_tool_1","model":"claude-3-5-haiku-20241022","cwd":".","tools":["bash","read"],"timestamp":"2026-02-04T00:00:00Z"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"I'll list the files."},{"type":"tool_use","id":"toolu_123","name":"bash","input":{"command":"ls -1"}}]},"session_id":"sess_tool_1","model":"claude-3-5-haiku-20241022"}
+{"type":"tool_result","message":{"role":"tool","content":[{"type":"tool_result","tool_use_id":"toolu_123","content":"README.md\nclaude_code_api\n","is_error":false}]},"session_id":"sess_tool_1","model":"claude-3-5-haiku-20241022"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"I found README.md and claude_code_api."}]},"session_id":"sess_tool_1","model":"claude-3-5-haiku-20241022"}
+{"type":"result","result":"ok","session_id":"sess_tool_1","model":"claude-3-5-haiku-20241022","usage":{"input_tokens":20,"output_tokens":15},"cost_usd":0.00005,"duration_ms":1500,"num_turns":1}
