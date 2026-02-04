@@ -1,10 +1,12 @@
 """Security utilities."""
 
 import os
+
 import structlog
 from fastapi import HTTPException, status
 
 logger = structlog.get_logger()
+
 
 def validate_path(path: str, base_path: str) -> str:
     """
@@ -39,11 +41,11 @@ def validate_path(path: str, base_path: str) -> str:
                 "Path traversal attempt detected",
                 path=path,
                 resolved_path=abs_path,
-                base_path=abs_base_path
+                base_path=abs_base_path,
             )
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid path: Path traversal detected"
+                detail="Invalid path: Path traversal detected",
             )
 
         return abs_path
@@ -53,6 +55,5 @@ def validate_path(path: str, base_path: str) -> str:
     except Exception as e:
         logger.error("Path validation error", error=str(e), path=path)
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid path: {str(e)}"
+            status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid path: {str(e)}"
         )

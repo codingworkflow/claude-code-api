@@ -1,13 +1,15 @@
 """End-to-end tests against a running API server."""
 
-import os
 import json
-import pytest
-import httpx
-from claude_code_api.models.claude import get_default_model
+import os
 
+import httpx
+import pytest
+
+from tests.model_utils import get_test_model_id
 
 BASE_URL = os.getenv("CLAUDE_CODE_API_BASE_URL", "http://localhost:8000")
+MODEL_ID = get_test_model_id()
 
 
 def _should_run_e2e() -> bool:
@@ -62,9 +64,9 @@ def test_live_models(live_client):
 @pytest.mark.e2e
 def test_live_chat_completion(live_client):
     payload = {
-        "model": get_default_model(),
+        "model": MODEL_ID,
         "messages": [{"role": "user", "content": "Say only 'hi'."}],
-        "stream": False
+        "stream": False,
     }
     response = live_client.post("/v1/chat/completions", json=payload)
     assert response.status_code == 200
@@ -76,12 +78,32 @@ def test_live_chat_completion(live_client):
 @pytest.mark.e2e
 def test_live_chat_streaming(live_client):
     payload = {
-        "model": get_default_model(),
+        "model": MODEL_ID,
         "messages": [{"role": "user", "content": "Say only 'hi'."}],
-        "stream": True
+        "stream": True,
     }
     with live_client.stream("POST", "/v1/chat/completions", json=payload) as response:
         assert response.status_code == 200
         lines = [line for line in response.iter_lines() if line]
     events = _parse_sse_lines(lines)
     assert any(event.get("object") == "chat.completion.chunk" for event in events)
+
+
+@pytest.mark.e2e
+def test_live_tool_calls(live_client):
+    payload = {
+        "model": MODEL_ID,
+        "messages": [
+            {
+                "role": "user",
+                "content": "Use the bash tool to run 'ls -1' and return the output.",
+            }
+        ],
+        "stream": False,
+    }
+    response = live_client.post("/v1/chat/completions", json=payload)
+    assert response.status_code == 200
+    data = response.json()
+    message = data["choices"][0]["message"]
+    assert message.get("tool_calls")
+    assert message["tool_calls"][0]["function"]["name"] == "bash"

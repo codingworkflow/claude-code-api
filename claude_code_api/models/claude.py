@@ -1,17 +1,24 @@
 """Claude Code specific models and utilities."""
 
-from datetime import datetime
-from functools import lru_cache
-from pathlib import Path
-from typing import List, Optional, Dict, Any, Union, Literal
 import json
 import os
+from datetime import datetime
 from enum import Enum
+from functools import lru_cache
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Union
+
 from pydantic import BaseModel, Field
+
+from claude_code_api.utils.time import utc_now
+
+SESSION_ID_DESC = "Session ID"
+PROJECT_PATH_DESC = "Project path"
 
 
 class ClaudeMessageType(str, Enum):
     """Claude message types from JSONL output."""
+
     SYSTEM = "system"
     USER = "user"
     ASSISTANT = "assistant"
@@ -23,6 +30,7 @@ class ClaudeMessageType(str, Enum):
 
 class ClaudeToolType(str, Enum):
     """Claude Code built-in tools."""
+
     BASH = "bash"
     EDIT = "edit"
     READ = "read"
@@ -36,10 +44,11 @@ class ClaudeToolType(str, Enum):
 
 class ClaudeMessage(BaseModel):
     """Claude message from JSONL output."""
+
     type: str = Field(..., description="Message type")
     subtype: Optional[str] = Field(None, description="Message subtype")
     message: Optional[Dict[str, Any]] = Field(None, description="Message content")
-    session_id: Optional[str] = Field(None, description="Session ID")
+    session_id: Optional[str] = Field(None, description=SESSION_ID_DESC)
     model: Optional[str] = Field(None, description="Model used")
     cwd: Optional[str] = Field(None, description="Current working directory")
     tools: Optional[List[str]] = Field(None, description="Available tools")
@@ -54,6 +63,7 @@ class ClaudeMessage(BaseModel):
 
 class ClaudeToolUse(BaseModel):
     """Claude tool use information."""
+
     id: str = Field(..., description="Tool use ID")
     name: str = Field(..., description="Tool name")
     input: Dict[str, Any] = Field(..., description="Tool input parameters")
@@ -61,9 +71,12 @@ class ClaudeToolUse(BaseModel):
 
 class ClaudeToolResult(BaseModel):
     """Claude tool result information."""
+
     tool_use_id: str = Field(..., description="Tool use ID")
     content: Union[str, Dict[str, Any]] = Field(..., description="Tool result content")
-    is_error: Optional[bool] = Field(False, description="Whether this is an error result")
+    is_error: Optional[bool] = Field(
+        False, description="Whether this is an error result"
+    )
 
 
 def _default_model_factory() -> str:
@@ -72,8 +85,9 @@ def _default_model_factory() -> str:
 
 class ClaudeSessionInfo(BaseModel):
     """Claude session information."""
-    session_id: str = Field(..., description="Session ID")
-    project_path: str = Field(..., description="Project path")
+
+    session_id: str = Field(..., description=SESSION_ID_DESC)
+    project_path: str = Field(..., description=PROJECT_PATH_DESC)
     model: str = Field(..., description="Model being used")
     started_at: datetime = Field(..., description="Session start time")
     is_running: bool = Field(..., description="Whether session is running")
@@ -84,6 +98,7 @@ class ClaudeSessionInfo(BaseModel):
 
 class ClaudeProcessStatus(str, Enum):
     """Claude process status."""
+
     STARTING = "starting"
     RUNNING = "running"
     COMPLETED = "completed"
@@ -94,8 +109,9 @@ class ClaudeProcessStatus(str, Enum):
 
 class ClaudeExecutionRequest(BaseModel):
     """Claude execution request."""
+
     prompt: str = Field(..., description="User prompt")
-    project_path: str = Field(..., description="Project path")
+    project_path: str = Field(..., description=PROJECT_PATH_DESC)
     model: Optional[str] = Field(None, description="Model to use")
     system_prompt: Optional[str] = Field(None, description="System prompt")
     resume_session: Optional[str] = Field(None, description="Session ID to resume")
@@ -104,7 +120,8 @@ class ClaudeExecutionRequest(BaseModel):
 
 class ClaudeExecutionResponse(BaseModel):
     """Claude execution response."""
-    session_id: str = Field(..., description="Session ID")
+
+    session_id: str = Field(..., description=SESSION_ID_DESC)
     status: ClaudeProcessStatus = Field(..., description="Execution status")
     messages: List[ClaudeMessage] = Field(..., description="Messages from execution")
     total_tokens: int = Field(0, description="Total tokens used")
@@ -114,7 +131,8 @@ class ClaudeExecutionResponse(BaseModel):
 
 class ClaudeStreamingChunk(BaseModel):
     """Claude streaming chunk."""
-    session_id: str = Field(..., description="Session ID")
+
+    session_id: str = Field(..., description=SESSION_ID_DESC)
     chunk_type: str = Field(..., description="Type of chunk")
     data: ClaudeMessage = Field(..., description="Chunk data")
     is_final: bool = Field(False, description="Whether this is the final chunk")
@@ -122,20 +140,28 @@ class ClaudeStreamingChunk(BaseModel):
 
 class ClaudeProjectConfig(BaseModel):
     """Claude project configuration."""
+
     project_id: str = Field(..., description="Project ID")
     name: str = Field(..., description="Project name")
-    path: str = Field(..., description="Project path")
-    default_model: str = Field(default_factory=_default_model_factory, description="Default model")
+    path: str = Field(..., description=PROJECT_PATH_DESC)
+    default_model: str = Field(
+        default_factory=_default_model_factory, description="Default model"
+    )
     system_prompt: Optional[str] = Field(None, description="Default system prompt")
-    tools_enabled: List[ClaudeToolType] = Field(default_factory=list, description="Enabled tools")
+    tools_enabled: List[ClaudeToolType] = Field(
+        default_factory=list, description="Enabled tools"
+    )
     max_tokens: Optional[int] = Field(None, description="Maximum tokens per request")
     temperature: Optional[float] = Field(None, description="Temperature setting")
-    created_at: datetime = Field(default_factory=datetime.utcnow, description="Creation time")
-    updated_at: datetime = Field(default_factory=datetime.utcnow, description="Last update time")
+    created_at: datetime = Field(default_factory=utc_now, description="Creation time")
+    updated_at: datetime = Field(
+        default_factory=utc_now, description="Last update time"
+    )
 
 
 class ClaudeFileInfo(BaseModel):
     """Claude file information."""
+
     path: str = Field(..., description="File path")
     name: str = Field(..., description="File name")
     size: int = Field(..., description="File size in bytes")
@@ -146,6 +172,7 @@ class ClaudeFileInfo(BaseModel):
 
 class ClaudeWorkspaceInfo(BaseModel):
     """Claude workspace information."""
+
     path: str = Field(..., description="Workspace path")
     files: List[ClaudeFileInfo] = Field(..., description="Files in workspace")
     total_files: int = Field(..., description="Total number of files")
@@ -155,6 +182,7 @@ class ClaudeWorkspaceInfo(BaseModel):
 
 class ClaudeVersionInfo(BaseModel):
     """Claude version information."""
+
     version: str = Field(..., description="Claude Code version")
     build: Optional[str] = Field(None, description="Build information")
     is_available: bool = Field(..., description="Whether Claude is available")
@@ -163,15 +191,19 @@ class ClaudeVersionInfo(BaseModel):
 
 class ClaudeErrorInfo(BaseModel):
     """Claude error information."""
+
     error_type: str = Field(..., description="Type of error")
     message: str = Field(..., description="Error message")
-    session_id: Optional[str] = Field(None, description="Session ID where error occurred")
-    timestamp: datetime = Field(default_factory=datetime.utcnow, description="Error timestamp")
+    session_id: Optional[str] = Field(
+        None, description="Session ID where error occurred"
+    )
+    timestamp: datetime = Field(default_factory=utc_now, description="Error timestamp")
     traceback: Optional[str] = Field(None, description="Error traceback")
 
 
 class ClaudeMetrics(BaseModel):
     """Claude usage metrics."""
+
     total_sessions: int = Field(..., description="Total number of sessions")
     active_sessions: int = Field(..., description="Currently active sessions")
     total_tokens: int = Field(..., description="Total tokens processed")
@@ -184,13 +216,16 @@ class ClaudeMetrics(BaseModel):
 
 class ClaudeModelInfo(BaseModel):
     """Claude model information."""
+
     id: str = Field(..., description="Model ID")
     name: str = Field(..., description="Model display name")
     description: str = Field(..., description="Model description")
     max_tokens: int = Field(..., description="Maximum tokens supported")
     input_cost_per_1k: float = Field(..., description="Input cost per 1K tokens")
     output_cost_per_1k: float = Field(..., description="Output cost per 1K tokens")
-    supports_streaming: bool = Field(True, description="Whether model supports streaming")
+    supports_streaming: bool = Field(
+        True, description="Whether model supports streaming"
+    )
     supports_tools: bool = Field(True, description="Whether model supports tool use")
 
 

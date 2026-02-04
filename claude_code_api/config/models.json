@@ -30,16 +30,6 @@
       "output_cost_per_1k": 1.25,
       "supports_streaming": true,
       "supports_tools": true
-    },
-    {
-      "id": "claude-3-5-haiku-20241022",
-      "name": "Claude Haiku 3.5",
-      "description": "Fast and cost-effective model for quick tasks",
-      "max_tokens": 200000,
-      "input_cost_per_1k": 0.25,
-      "output_cost_per_1k": 1.25,
-      "supports_streaming": true,
-      "supports_tools": true
     }
   ]
 }

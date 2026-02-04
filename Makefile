@@ -89,7 +89,7 @@ kill:
 sonar: ## Run sonar-scanner for SonarQube analysis
 	@mkdir -p $(SONAR_DIR) $(COVERAGE_DIR)
 	@echo "Generating coverage report for SonarQube..."
-	@python -m pytest --cov=claude_code_api --cov-report=xml --cov-report=term-missing -v tests/
+	@python -m pytest --cov=claude_code_api --cov-report=xml:$(COVERAGE_DIR)/coverage.xml --cov-report=term-missing --junitxml=$(SONAR_DIR)/xunit-report.xml -v tests/
 	@if command -v sonar-scanner >/dev/null 2>&1; then \
 		if [ -f ".env.vault" ]; then \
 			. ./.env.vault; \
@@ -131,7 +131,7 @@ sonar-cloud: ## Run sonar-scanner for SonarCloud (uses different token/env)
 
 coverage-sonar: ## Generate coverage for SonarQube
 	@mkdir -p $(COVERAGE_DIR)
-	@python -m pytest --cov=claude_code_api --cov-report=xml --cov-report=term-missing -v tests/
+	@python -m pytest --cov=claude_code_api --cov-report=xml:$(COVERAGE_DIR)/coverage.xml --cov-report=term-missing --junitxml=$(SONAR_DIR)/xunit-report.xml -v tests/
 	@echo "Coverage XML generated: $(COVERAGE_DIR)/coverage.xml"
 
 sbom: ## Generate SBOM with syft

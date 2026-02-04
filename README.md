@@ -58,7 +58,6 @@ Override with `CLAUDE_CODE_API_MODELS_PATH` to point at a custom JSON file.
 - `claude-opus-4-5-20250929` - Claude Opus 4.5 (Most powerful)
 - `claude-sonnet-4-5-20250929` - Claude Sonnet 4.5 (Latest Sonnet)
 - `claude-haiku-4-5-20250929` - Claude Haiku 4.5 (Fast & cost-effective)
-- `claude-3-5-haiku-20241022` - Claude Haiku 3.5 (Fast & cost-effective)
 
 ## Quick Start
 
