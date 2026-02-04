@@ -1,6 +1,7 @@
 """Security utilities."""
 
 import os
+from pathlib import Path
 
 import structlog
 from fastapi import HTTPException, status
@@ -8,13 +9,13 @@ from fastapi import HTTPException, status
 logger = structlog.get_logger()
 
 
-def validate_path(path: str, base_path: str) -> str:
+def resolve_path_within_base(path: str, base_path: str) -> str:
     """
-    Validate that a path is safe and within the base path.
-    Prevents directory traversal attacks.
+    Resolve a user-provided path within a base directory.
+    Prevents directory traversal and symlink escapes.
 
     Args:
-        path: The path to validate (can be absolute or relative)
+        path: The path to resolve (can be absolute or relative)
         base_path: The allowed base directory
 
     Returns:
@@ -24,36 +25,71 @@ def validate_path(path: str, base_path: str) -> str:
         HTTPException: If path is invalid or outside base_path
     """
     try:
-        # Normalize base path to absolute path
-        abs_base_path = os.path.abspath(base_path)
+        if path is None or not str(path).strip():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid path: Path is required",
+            )
+        if "\x00" in str(path):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid path: Null byte detected",
+            )
 
-        # Handle relative paths by joining with base_path
-        if not os.path.isabs(path):
-            abs_path = os.path.abspath(os.path.join(abs_base_path, path))
-        else:
-            abs_path = os.path.abspath(path)
+        abs_base_path = Path(base_path).resolve()
+        candidate_path = Path(path)
+        if not candidate_path.is_absolute():
+            candidate_path = abs_base_path / candidate_path
 
-        # Check if path is within base_path
-        # os.path.commonpath returns the longest common sub-path
-        # If valid, commonpath should be equal to base_path
-        if os.path.commonpath([abs_base_path, abs_path]) != abs_base_path:
+        resolved_path = candidate_path.resolve(strict=False)
+
+        if not resolved_path.is_relative_to(abs_base_path):
             logger.warning(
                 "Path traversal attempt detected",
                 path=path,
-                resolved_path=abs_path,
-                base_path=abs_base_path,
+                resolved_path=str(resolved_path),
+                base_path=str(abs_base_path),
             )
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Invalid path: Path traversal detected",
             )
 
-        return abs_path
+        return str(resolved_path)
 
     except HTTPException:
         raise
     except Exception as e:
         logger.error("Path validation error", error=str(e), path=path)
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid path: {str(e)}"
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid path: Path validation failed",
         )
+
+
+def ensure_directory_within_base(
+    path: str, base_path: str, *, allow_subpaths: bool = True
+) -> str:
+    """Validate a path within base_path and create the directory."""
+    path_value = os.fspath(path)
+    if not allow_subpaths:
+        if os.path.isabs(path_value):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid path: Absolute paths are not allowed",
+            )
+        for sep in (os.path.sep, os.path.altsep):
+            if sep and sep in path_value:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Invalid path: Path separators are not allowed",
+                )
+
+    resolved_path = resolve_path_within_base(path_value, base_path)
+    os.makedirs(resolved_path, exist_ok=True)
+    return resolved_path
+
+
+def validate_path(path: str, base_path: str) -> str:
+    """Backward-compatible wrapper for path resolution."""
+    return resolve_path_within_base(path, base_path)

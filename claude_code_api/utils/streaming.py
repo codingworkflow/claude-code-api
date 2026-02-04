@@ -150,8 +150,8 @@ class OpenAIStreamConverter:
             yield SSEFormatter.format_completion("")
 
         except Exception as e:
-            logger.error("Error in stream conversion", error=str(e))
-            yield SSEFormatter.format_error(f"Stream error: {str(e)}")
+            logger.error("Error in stream conversion", error=str(e), exc_info=True)
+            yield SSEFormatter.format_error("Stream error")
 
     def get_final_response(self) -> Dict[str, Any]:
         """Get complete response in OpenAI format."""
@@ -198,8 +198,10 @@ class StreamingManager:
             heartbeat_task.cancel()
 
         except Exception as e:
-            logger.error("Streaming error", session_id=session_id, error=str(e))
-            yield SSEFormatter.format_error(f"Streaming failed: {str(e)}")
+            logger.error(
+                "Streaming error", session_id=session_id, error=str(e), exc_info=True
+            )
+            yield SSEFormatter.format_error("Streaming failed")
         finally:
             # Cleanup
             if session_id in self.active_streams:
@@ -305,10 +307,16 @@ async def create_sse_response(
     session_id: str, model: str, claude_process: ClaudeProcess
 ) -> AsyncGenerator[str, None]:
     """Create SSE response for Claude Code output."""
-    async for chunk in streaming_manager.create_stream(
-        session_id, model, claude_process
-    ):
-        yield chunk
+    try:
+        async for chunk in streaming_manager.create_stream(
+            session_id, model, claude_process
+        ):
+            yield chunk
+    except Exception as e:
+        logger.error(
+            "SSE response error", session_id=session_id, error=str(e), exc_info=True
+        )
+        yield SSEFormatter.format_error("Stream error")
 
 
 def _extract_assistant_payload(

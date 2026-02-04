@@ -11,6 +11,7 @@ import structlog
 from claude_code_api.models.claude import get_default_model
 
 from .config import settings
+from .security import ensure_directory_within_base
 
 logger = structlog.get_logger()
 
@@ -396,9 +397,7 @@ class ClaudeManager:
 # Utility functions for project management
 def create_project_directory(project_id: str) -> str:
     """Create project directory."""
-    project_path = os.path.join(settings.project_root, project_id)
-    os.makedirs(project_path, exist_ok=True)
-    return project_path
+    return ensure_directory_within_base(project_id, settings.project_root)
 
 
 def cleanup_project_directory(project_path: str):

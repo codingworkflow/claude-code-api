@@ -1,7 +1,6 @@
 """Projects API endpoint - Extension to OpenAI API."""
 
 import math
-import os
 import uuid
 
 import structlog
@@ -15,7 +14,7 @@ from claude_code_api.core.claude_manager import (
 )
 from claude_code_api.core.config import settings
 from claude_code_api.core.database import db_manager
-from claude_code_api.core.security import validate_path
+from claude_code_api.core.security import ensure_directory_within_base
 from claude_code_api.models.openai import (
     CreateProjectRequest,
     PaginatedResponse,
@@ -74,10 +73,9 @@ async def create_project(
 
     # Create project directory
     if project_request.path:
-        # Validate path
-        project_path = validate_path(project_request.path, settings.project_root)
-
-        os.makedirs(project_path, exist_ok=True)
+        project_path = ensure_directory_within_base(
+            project_request.path, settings.project_root
+        )
     else:
         project_path = create_project_directory(project_id)
 
