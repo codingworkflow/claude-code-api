@@ -16,6 +16,8 @@ from claude_code_api.models.openai import (
 )
 from claude_code_api.core.database import db_manager, Project
 from claude_code_api.core.claude_manager import create_project_directory, cleanup_project_directory
+from claude_code_api.core.security import validate_path
+from claude_code_api.core.config import settings
 
 logger = structlog.get_logger()
 router = APIRouter()
@@ -69,7 +71,13 @@ async def create_project(
     
     # Create project directory
     if project_request.path:
-        project_path = project_request.path
+        # Validate path
+        try:
+            project_path = validate_path(project_request.path, settings.project_root)
+        except HTTPException:
+            # Re-raise with meaningful error if needed or let it bubble up
+            raise
+
         os.makedirs(project_path, exist_ok=True)
     else:
         project_path = create_project_directory(project_id)

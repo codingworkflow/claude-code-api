@@ -7,7 +7,7 @@ name = "claude-code-api"
 version = "1.0.0"
 description = "OpenAI-compatible API gateway for Claude Code with streaming support"
 readme = "README.md"
-license = {text = "MIT"}
+license = {text = "GPL-3.0-or-later"}
 authors = [
     {name = "Claude Code API Team"}
 ]
@@ -15,23 +15,22 @@ keywords = ["claude", "api", "openai", "streaming", "ai"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
+    "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Topic :: Internet :: WWW/HTTP :: HTTP Servers",
 ]
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
-    "fastapi>=0.104.0",
-    "uvicorn[standard]>=0.24.0",
-    "pydantic>=2.5.0",
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+    "pydantic>=2.9.0",
     "httpx>=0.25.0",
     "aiofiles>=23.2.1",
     "structlog>=23.2.0",
-    "asyncio-mqtt>=0.16.1",
     "python-multipart>=0.0.6",
     "pydantic-settings>=2.1.0",
     "sqlalchemy>=2.0.23",
@@ -105,7 +104,7 @@ exclude_lines = [
 
 [tool.black]
 line-length = 88
-target-version = ['py310']
+target-version = ['py311']
 include = '\\.pyi?$'
 extend-exclude = '''
 /(
@@ -128,7 +127,7 @@ line_length = 88
 known_first_party = ["claude_code_api"]
 
 [tool.mypy]
-python_version = "3.10"
+python_version = "3.11"
 check_untyped_defs = true
 disallow_any_generics = true
 disallow_incomplete_defs = true
