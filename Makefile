@@ -5,8 +5,25 @@ install:
 	pip install -e .
 	pip install requests
 
+install-dev:
+	pip install -e ".[test,dev]"
+	pip install requests
+
 test:
+	python -m pytest --cov=claude_code_api --cov-report=html tests/ -v
+
+test-no-cov:
 	python -m pytest tests/ -v
+
+coverage:
+	@echo "Opening coverage report..."
+	@if [ "$$(uname)" = "Darwin" ]; then \
+		open htmlcov/index.html; \
+	elif [ "$$(uname)" = "Linux" ]; then \
+		xdg-open htmlcov/index.html || echo "Please open htmlcov/index.html in your browser"; \
+	else \
+		echo "Please open htmlcov/index.html in your browser"; \
+	fi
 
 test-real:
 	python tests/test_real_api.py
@@ -44,7 +61,10 @@ help:
 	@echo ""
 	@echo "Python API:"
 	@echo "  make install     - Install Python dependencies"
-	@echo "  make test        - Run Python unit tests with real Claude integration"
+	@echo "  make install-dev - Install Python development dependencies"
+	@echo "  make test        - Run Python unit tests with coverage"
+	@echo "  make test-no-cov - Run Python unit tests without coverage"
+	@echo "  make coverage    - Open HTML coverage report"
 	@echo "  make test-real   - Run REAL end-to-end tests (curls actual API)"
 	@echo "  make start       - Start Python API server (development with reload)"
 	@echo "  make start-prod  - Start Python API server (production)"

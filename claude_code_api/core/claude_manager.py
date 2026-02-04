@@ -192,32 +192,6 @@ class ClaudeProcess:
                     error=str(e)
                 )
     
-    async def _start_mock_process(self, prompt: str, model: str):
-        """Start mock process for testing."""
-        self.is_running = True
-        
-        # Create mock Claude response
-        mock_response = {
-            "type": "result",
-            "sessionId": self.session_id,
-            "model": model or "claude-3-5-haiku-20241022",
-            "message": {
-                "role": "assistant", 
-                "content": f"Hello! You said: '{prompt}'. This is a mock response from Claude Code API Gateway."
-            },
-            "usage": {
-                "input_tokens": len(prompt.split()),
-                "output_tokens": 15,
-                "total_tokens": len(prompt.split()) + 15
-            },
-            "cost_usd": 0.001,
-            "duration_ms": 100
-        }
-        
-        # Put the response in the queue
-        await self.output_queue.put(mock_response)
-        await self.output_queue.put(None)  # End signal
-    
     async def stop(self):
         """Stop Claude process."""
         self.is_running = False
