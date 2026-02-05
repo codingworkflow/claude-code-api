@@ -10,6 +10,42 @@ from fastapi import HTTPException, status
 logger = structlog.get_logger()
 
 
+def _bad_request(detail: str) -> HTTPException:
+    return HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail)
+
+
+def _ensure_leaf_path(path_value: str) -> None:
+    if os.path.isabs(path_value):
+        raise _bad_request("Invalid path: Absolute paths are not allowed")
+    for sep in (os.path.sep, os.path.altsep):
+        if sep and sep in path_value:
+            raise _bad_request("Invalid path: Path separators are not allowed")
+
+
+def _sanitize_leaf_value(path_value: str) -> str:
+    sanitized = re.sub(r"[^A-Za-z0-9._-]", "_", path_value)
+    if not sanitized.strip("._-"):
+        raise _bad_request("Invalid path: Path is required")
+    return sanitized
+
+
+def _ensure_within_base(path_value: str, base_path: str, resolved_path: str) -> None:
+    abs_base_path = os.path.abspath(base_path)
+    abs_resolved_path = os.path.abspath(resolved_path)
+    try:
+        common_path = os.path.commonpath([abs_base_path, abs_resolved_path])
+    except ValueError:
+        common_path = ""
+    if common_path != abs_base_path:
+        logger.warning(
+            "Path traversal attempt detected (post-validate)",
+            path=path_value,
+            resolved_path=resolved_path,
+            base_path=abs_base_path,
+        )
+        raise _bad_request("Invalid path: Path traversal detected")
+
+
 def resolve_path_within_base(path: str, base_path: str) -> str:
     """
     Resolve a user-provided path within a base directory.
@@ -85,56 +121,20 @@ def ensure_directory_within_base(
     """Validate a path within base_path and create the directory."""
     path_value = os.fspath(path)
     if not allow_subpaths:
-        if os.path.isabs(path_value):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid path: Absolute paths are not allowed",
-            )
-        for sep in (os.path.sep, os.path.altsep):
-            if sep and sep in path_value:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Invalid path: Path separators are not allowed",
-                )
+        _ensure_leaf_path(path_value)
 
     if sanitize_leaf:
         if allow_subpaths:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid path: Sanitization only allowed for leaf paths",
-            )
-        sanitized = re.sub(r"[^A-Za-z0-9._-]", "_", path_value)
-        if not sanitized.strip("._-"):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid path: Path is required",
-            )
-        path_value = sanitized
+            raise _bad_request("Invalid path: Sanitization only allowed for leaf paths")
+        path_value = _sanitize_leaf_value(path_value)
 
     resolved_path = resolve_path_within_base(path_value, base_path)
-    abs_base_path = os.path.abspath(base_path)
-    abs_resolved_path = os.path.abspath(resolved_path)
-    try:
-        common_path = os.path.commonpath([abs_base_path, abs_resolved_path])
-    except ValueError:
-        common_path = ""
-    if common_path != abs_base_path:
-        logger.warning(
-            "Path traversal attempt detected (post-validate)",
-            path=path_value,
-            resolved_path=resolved_path,
-            base_path=abs_base_path,
-        )
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid path: Path traversal detected",
-        )
+    _ensure_within_base(path_value, base_path, resolved_path)
     try:
         os.makedirs(resolved_path, exist_ok=True)
     except FileExistsError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid path: {resolved_path} exists and is not a directory",
+        raise _bad_request(
+            f"Invalid path: {resolved_path} exists and is not a directory"
         ) from e
     return resolved_path
 

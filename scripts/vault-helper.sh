@@ -220,8 +220,8 @@ vault_helper::fetch_and_export() {
     while IFS=$'\t' read -r key b64_value; do
         [[ -z "$key" ]] && continue
         if [[ ! "$key" =~ ^[A-Z_][A-Z0-9_]*$ ]]; then
-            vault_helper::log_error "Invalid secret key name: ${key}"
-            return 1
+            vault_helper::log_warn "Skipping non-env secret key: ${key}"
+            continue
         fi
         if ! value=$(printf '%s' "$b64_value" | base64 --decode 2>/dev/null); then
             if ! value=$(printf '%s' "$b64_value" | base64 -d 2>/dev/null); then

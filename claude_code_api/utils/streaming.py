@@ -228,7 +228,7 @@ class StreamingManager:
                 await asyncio.sleep(self.heartbeat_interval)
                 await heartbeat_queue.put(SSEFormatter.format_heartbeat())
         except asyncio.CancelledError:
-            return
+            raise
 
     def get_active_stream_count(self) -> int:
         """Get number of active streams."""

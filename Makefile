@@ -94,7 +94,7 @@ sonar-cloud: ## Run sonar-scanner for SonarCloud (uses different token/env)
 	@./scripts/run-sonar-cloud.sh
 
 coverage-sonar: ## Generate coverage for SonarQube
-	@mkdir -p $(COVERAGE_DIR)
+	@mkdir -p $(COVERAGE_DIR) $(SONAR_DIR)
 	@python -m pytest --cov=claude_code_api --cov-report=xml:$(COVERAGE_DIR)/coverage.xml --cov-report=term-missing --junitxml=$(SONAR_DIR)/xunit-report.xml -v tests/
 	@echo "Coverage XML generated: $(COVERAGE_DIR)/coverage.xml"
 
