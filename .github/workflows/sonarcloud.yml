@@ -33,7 +33,8 @@ jobs:
         with:
           args: >
             -Dsonar.host.url=https://sonarcloud.io
-            -Dsonar.organization=${{ secrets.SONAR_ORG }}
+            -Dsonar.organization=codingworkflow
+            -Dsonar.projectKey=codingworkflow_claude-code-a-api
 
       - name: SonarCloud quality gate
         uses: SonarSource/sonarqube-quality-gate-action@v1.1.0

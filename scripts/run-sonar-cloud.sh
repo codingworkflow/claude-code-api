@@ -56,9 +56,9 @@ if [ -z "${SONAR_CLOUD_TOKEN:-}" ]; then
 fi
 
 # Set defaults if not provided
-SONAR_HOST_URL="${SONAR_CLOUD_URL:-https://sonarcloud.io}"
-SONAR_ORG="${SONAR_CLOUD_ORG:-}"
-SONAR_PROJECT_KEY="${SONAR_CLOUD_PROJECT:-claude-code-api}"
+SONAR_HOST_URL="${SONAR_HOST_URL:-${SONAR_CLOUD_URL:-https://sonarcloud.io}}"
+SONAR_ORG="${SONAR_ORG:-${SONAR_CLOUD_ORG:-}}"
+SONAR_PROJECT_KEY="${SONAR_PROJECT_KEY:-${SONAR_CLOUD_PROJECT:-claude-code-api}}"
 
 # Generate coverage for SonarCloud
 echo "Generating coverage report for SonarCloud..."

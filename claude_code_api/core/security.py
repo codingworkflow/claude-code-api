@@ -30,8 +30,8 @@ def _sanitize_leaf_value(path_value: str) -> str:
 
 
 def _ensure_within_base(path_value: str, base_path: str, resolved_path: str) -> None:
-    abs_base_path = os.path.abspath(base_path)
-    abs_resolved_path = os.path.abspath(resolved_path)
+    abs_base_path = os.path.realpath(base_path)
+    abs_resolved_path = os.path.realpath(resolved_path)
     try:
         common_path = os.path.commonpath([abs_base_path, abs_resolved_path])
     except ValueError:
@@ -73,33 +73,38 @@ def resolve_path_within_base(path: str, base_path: str) -> str:
                 detail="Invalid path: Null byte detected",
             )
 
-        abs_base_path = Path(base_path).resolve()
-        candidate_path = Path(path)
-        if not candidate_path.is_absolute():
-            candidate_path = abs_base_path / candidate_path
-
-        resolved_path = candidate_path.resolve(strict=False)
+        abs_base_path = os.path.realpath(base_path)
+        path_value = os.fspath(path)
+        normalized_path = os.path.normpath(path_value)
+        if not os.path.isabs(normalized_path):
+            if normalized_path == ".." or normalized_path.startswith(f"..{os.path.sep}"):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Invalid path: Path traversal detected",
+                )
+        if os.path.isabs(normalized_path):
+            resolved_path = os.path.realpath(normalized_path)
+        else:
+            resolved_path = os.path.realpath(os.path.join(abs_base_path, normalized_path))
 
         try:
-            common_path = os.path.commonpath(
-                [os.fspath(abs_base_path), os.fspath(resolved_path)]
-            )
+            common_path = os.path.commonpath([abs_base_path, resolved_path])
         except ValueError:
             common_path = ""
 
-        if common_path != os.fspath(abs_base_path):
+        if common_path != abs_base_path:
             logger.warning(
                 "Path traversal attempt detected",
                 path=path,
-                resolved_path=str(resolved_path),
-                base_path=str(abs_base_path),
+                resolved_path=resolved_path,
+                base_path=abs_base_path,
             )
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Invalid path: Path traversal detected",
             )
 
-        return str(resolved_path)
+        return resolved_path
 
     except HTTPException:
         raise
