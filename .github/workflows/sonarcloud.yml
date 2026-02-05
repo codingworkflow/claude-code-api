@@ -41,7 +41,7 @@ jobs:
             -Dsonar.python.xunit.reportPath=dist/quality/sonar/xunit-report.xml
 
       - name: SonarCloud quality gate
-        uses: SonarSource/sonarqube-quality-gate-action@v1.1.0
+        uses: SonarSource/sonarqube-quality-gate-action@v1.2.0
         with:
           scanMetadataReportFile: dist/quality/sonar/scannerwork/report-task.txt
         env:
