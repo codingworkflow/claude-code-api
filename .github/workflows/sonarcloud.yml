@@ -1,6 +1,7 @@
 name: SonarCloud QA Gate
 
 on:
+  workflow_dispatch:
   pull_request:
   push:
     branches:
@@ -39,6 +40,7 @@ jobs:
             -Dsonar.projectKey=codingworkflow_claude-code-a-api
             -Dsonar.python.coverage.reportPaths=dist/quality/coverage/coverage.xml
             -Dsonar.python.xunit.reportPath=dist/quality/sonar/xunit-report.xml
+            -Dsonar.enableIssueAnnotation=true
 
       - name: SonarCloud quality gate
         uses: SonarSource/sonarqube-quality-gate-action@v1.2.0
