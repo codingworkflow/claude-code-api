@@ -63,7 +63,12 @@ SONAR_PROJECT_KEY="${SONAR_PROJECT_KEY:-${SONAR_CLOUD_PROJECT:-claude-code-api}}
 # Generate coverage for SonarCloud
 echo "Generating coverage report for SonarCloud..."
 mkdir -p dist/quality/coverage dist/quality/sonar
-python -m pytest --cov=claude_code_api --cov-report=xml --cov-report=term-missing -v tests/
+python -m pytest \
+    --cov=claude_code_api \
+    --cov-report=xml:dist/quality/coverage/coverage.xml \
+    --cov-report=term-missing \
+    --junitxml=dist/quality/sonar/xunit-report.xml \
+    -v tests/
 
 echo "Running SonarCloud scanner..."
 echo "   Organization: $SONAR_ORG"

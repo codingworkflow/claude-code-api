@@ -36,7 +36,9 @@ jobs:
           args: >
             -Dsonar.host.url=https://sonarcloud.io
             -Dsonar.organization=codingworkflow
-            -Dsonar.projectKey=codingworkflow_claude-code-api
+            -Dsonar.projectKey=codingworkflow_claude-code-a-api
+            -Dsonar.python.coverage.reportPaths=dist/quality/coverage/coverage.xml
+            -Dsonar.python.xunit.reportPath=dist/quality/sonar/xunit-report.xml
 
       - name: SonarCloud quality gate
         uses: SonarSource/sonarqube-quality-gate-action@v1.1.0
