@@ -1,8 +1,10 @@
 name: SonarCloud QA Gate
 
 on:
-  push:
   pull_request:
+  push:
+    branches:
+      - main
 
 jobs:
   sonarcloud:
@@ -34,7 +36,7 @@ jobs:
           args: >
             -Dsonar.host.url=https://sonarcloud.io
             -Dsonar.organization=codingworkflow
-            -Dsonar.projectKey=codingworkflow_claude-code-a-api
+            -Dsonar.projectKey=codingworkflow_claude-code-api
 
       - name: SonarCloud quality gate
         uses: SonarSource/sonarqube-quality-gate-action@v1.1.0

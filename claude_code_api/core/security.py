@@ -136,7 +136,7 @@ def ensure_directory_within_base(
     resolved_path = resolve_path_within_base(path_value, base_path)
     _ensure_within_base(path_value, base_path, resolved_path)
     try:
-        os.makedirs(resolved_path, exist_ok=True)
+        os.makedirs(resolved_path, exist_ok=True)  # codeql[py/path-injection]
     except FileExistsError as e:
         raise _bad_request(
             f"Invalid path: {resolved_path} exists and is not a directory"
