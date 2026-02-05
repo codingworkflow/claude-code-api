@@ -210,13 +210,28 @@ vault_helper::fetch_and_export() {
 
     if ! exports=$(printf '%s' "$data_json" | jq -r '
         to_entries[]? |
-        "export \(.key)=\(.value | @sh)"
+        [.key, (.value | tostring | @base64)] |
+        @tsv
     '); then
         vault_helper::log_error "Unable to parse secrets from ${path}"
         return 1
     fi
 
-    eval "$exports"
+    while IFS=$'\t' read -r key b64_value; do
+        [[ -z "$key" ]] && continue
+        if [[ ! "$key" =~ ^[A-Z_][A-Z0-9_]*$ ]]; then
+            vault_helper::log_error "Invalid secret key name: ${key}"
+            return 1
+        fi
+        if ! value=$(printf '%s' "$b64_value" | base64 --decode 2>/dev/null); then
+            if ! value=$(printf '%s' "$b64_value" | base64 -d 2>/dev/null); then
+                vault_helper::log_error "Failed to decode secret for ${key}"
+                return 1
+            fi
+        fi
+        printf -v "$key" '%s' "$value"
+        export "$key"
+    done <<< "$exports"
     vault_helper::apply_mappings "$data_json" "$path" "$mappings"
 
     count=$(printf '%s' "$data_json" | jq 'length')

@@ -40,6 +40,12 @@ if [ -n "${VAULT_SECRET_PATHS:-}" ] || [ -n "${VAULT_REQUIRED_VARS:-}" ]; then
       "${VAULT_SECRET_PATHS:-}" \
       "${VAULT_REQUIRED_VARS:-}" \
       "${VAULT_TOKEN_FILE:-}"
+  else
+    echo "Error: vault-helper.sh is required when VAULT_SECRET_PATHS or VAULT_REQUIRED_VARS is set." >&2
+    echo "Missing helper: ./scripts/vault-helper.sh" >&2
+    echo "VAULT_SECRET_PATHS=${VAULT_SECRET_PATHS:-<empty>}" >&2
+    echo "VAULT_REQUIRED_VARS=${VAULT_REQUIRED_VARS:-<empty>}" >&2
+    exit 1
   fi
 fi
 

@@ -4,11 +4,10 @@ import os
 
 from claude_code_api.models.claude import get_available_models, get_default_model
 
-TEST_MODEL_ID = os.getenv("CLAUDE_CODE_API_TEST_MODEL", "claude-haiku-4-5-20250929")
-
 
 def get_test_model_id() -> str:
+    test_model_id = os.getenv("CLAUDE_CODE_API_TEST_MODEL") or ""
     available = {model.id for model in get_available_models()}
-    if TEST_MODEL_ID in available:
-        return TEST_MODEL_ID
+    if test_model_id and test_model_id in available:
+        return test_model_id
     return get_default_model()

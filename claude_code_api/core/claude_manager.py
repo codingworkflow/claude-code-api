@@ -72,8 +72,20 @@ class ClaudeProcess:
 
             # Start process from src directory (where Claude works without API key)
             src_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+            safe_cmd: List[str] = []
+            redact_next = False
+            for part in cmd:
+                if redact_next:
+                    safe_cmd.append("<redacted>")
+                    redact_next = False
+                    continue
+                if part in ("-p", "--system-prompt"):
+                    safe_cmd.append(part)
+                    redact_next = True
+                    continue
+                safe_cmd.append(part)
             logger.info(f"Starting Claude from directory: {src_dir}")
-            logger.info(f"Command: {' '.join(cmd)}")
+            logger.info(f"Command: {' '.join(safe_cmd)}")
 
             # Start process asynchronously
             self.process = await asyncio.create_subprocess_exec(
@@ -397,7 +409,12 @@ class ClaudeManager:
 # Utility functions for project management
 def create_project_directory(project_id: str) -> str:
     """Create project directory."""
-    return ensure_directory_within_base(project_id, settings.project_root)
+    return ensure_directory_within_base(
+        project_id,
+        settings.project_root,
+        allow_subpaths=False,
+        sanitize_leaf=True,
+    )
 
 
 def cleanup_project_directory(project_path: str):

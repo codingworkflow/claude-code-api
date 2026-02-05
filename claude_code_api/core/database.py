@@ -14,6 +14,7 @@ from sqlalchemy import (
     Text,
     func,
     select,
+    update,
 )
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.ext.declarative import declarative_base
@@ -161,7 +162,9 @@ class DatabaseManager:
     @staticmethod
     async def list_projects(page: int, per_page: int) -> List[Project]:
         """List projects with pagination."""
-        offset = max(0, (page - 1) * per_page)
+        page = max(1, page)
+        per_page = max(1, min(per_page, 100))
+        offset = (page - 1) * per_page
         async with AsyncSessionLocal() as session:
             stmt = (
                 select(Project)
@@ -231,13 +234,18 @@ class DatabaseManager:
     async def update_session_metrics(session_id: str, tokens_used: int, cost: float):
         """Update session usage metrics."""
         async with AsyncSessionLocal() as session:
-            session_obj = await session.get(Session, session_id)
-            if session_obj:
-                session_obj.total_tokens += tokens_used
-                session_obj.total_cost += cost
-                session_obj.message_count += 1
-                session_obj.updated_at = utc_now()
-                await session.commit()
+            stmt = (
+                update(Session)
+                .where(Session.id == session_id)
+                .values(
+                    total_tokens=Session.total_tokens + tokens_used,
+                    total_cost=Session.total_cost + cost,
+                    message_count=Session.message_count + 1,
+                    updated_at=utc_now(),
+                )
+            )
+            await session.execute(stmt)
+            await session.commit()
 
     @staticmethod
     async def deactivate_session(session_id: str):

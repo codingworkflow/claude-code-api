@@ -10,4 +10,4 @@ def utc_now() -> datetime:
 
 def utc_timestamp() -> int:
     """Return a UTC unix timestamp in seconds."""
-    return int(utc_now().timestamp())
+    return int(datetime.now(timezone.utc).timestamp())

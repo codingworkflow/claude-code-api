@@ -2,12 +2,12 @@
   "default_model": "claude-sonnet-4-5-20250929",
   "models": [
     {
-      "id": "claude-opus-4-5-20250929",
+      "id": "claude-opus-4-5-20251101",
       "name": "Claude Opus 4.5",
       "description": "Most powerful Claude model for complex reasoning",
-      "max_tokens": 500000,
-      "input_cost_per_1k": 15.0,
-      "output_cost_per_1k": 75.0,
+      "max_tokens": 65536,
+      "input_cost_per_1k": 0.005,
+      "output_cost_per_1k": 0.025,
       "supports_streaming": true,
       "supports_tools": true
     },
@@ -15,19 +15,19 @@
       "id": "claude-sonnet-4-5-20250929",
       "name": "Claude Sonnet 4.5",
       "description": "Latest Sonnet model with enhanced capabilities",
-      "max_tokens": 500000,
-      "input_cost_per_1k": 3.0,
-      "output_cost_per_1k": 15.0,
+      "max_tokens": 65536,
+      "input_cost_per_1k": 0.003,
+      "output_cost_per_1k": 0.015,
       "supports_streaming": true,
       "supports_tools": true
     },
     {
-      "id": "claude-haiku-4-5-20250929",
+      "id": "claude-haiku-4-5-20251001",
       "name": "Claude Haiku 4.5",
       "description": "Fast and cost-effective model for quick tasks",
-      "max_tokens": 200000,
-      "input_cost_per_1k": 0.25,
-      "output_cost_per_1k": 1.25,
+      "max_tokens": 65536,
+      "input_cost_per_1k": 0.001,
+      "output_cost_per_1k": 0.005,
       "supports_streaming": true,
       "supports_tools": true
     }

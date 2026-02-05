@@ -1,8 +1,10 @@
 """Server-Sent Events streaming utilities for OpenAI compatibility."""
 
 import asyncio
+import contextlib
 import json
 import uuid
+from dataclasses import dataclass
 from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple
 
 import structlog
@@ -36,7 +38,7 @@ class SSEFormatter:
         return f"data: {json_data}\n\n"
 
     @staticmethod
-    def format_completion(data: str) -> str:
+    def format_completion() -> str:
         """Format completion signal."""
         return "data: [DONE]\n\n"
 
@@ -139,44 +141,30 @@ class OpenAIStreamConverter:
                     break
 
             # Send final chunk
-            finish_reason = (
-                "tool_calls" if (saw_tool_calls and not saw_assistant_text) else "stop"
-            )
+            finish_reason = "tool_calls" if saw_tool_calls else "stop"
             yield SSEFormatter.format_event(
                 self._build_chunk({}, finish_reason=finish_reason)
             )
 
             # Send completion signal
-            yield SSEFormatter.format_completion("")
+            yield SSEFormatter.format_completion()
 
         except Exception as e:
             logger.error("Error in stream conversion", error=str(e), exc_info=True)
             yield SSEFormatter.format_error("Stream error")
 
-    def get_final_response(self) -> Dict[str, Any]:
-        """Get complete response in OpenAI format."""
-        return {
-            "id": self.completion_id,
-            "object": "chat.completion",
-            "created": self.created,
-            "model": self.model,
-            "choices": [
-                {
-                    "index": 0,
-                    "message": {"role": "assistant", "content": "Response completed"},
-                    "finish_reason": "stop",
-                }
-            ],
-            "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
-            "session_id": self.session_id,
-        }
+
+@dataclass
+class StreamState:
+    converter: OpenAIStreamConverter
+    heartbeat_queue: asyncio.Queue[Optional[str]]
 
 
 class StreamingManager:
     """Manages multiple streaming connections."""
 
     def __init__(self):
-        self.active_streams: Dict[str, OpenAIStreamConverter] = {}
+        self.active_streams: Dict[str, StreamState] = {}
         self.heartbeat_interval = 30  # seconds
 
     async def create_stream(
@@ -184,18 +172,32 @@ class StreamingManager:
     ) -> AsyncGenerator[str, None]:
         """Create new streaming connection."""
         converter = OpenAIStreamConverter(model, session_id)
-        self.active_streams[session_id] = converter
+        heartbeat_queue: asyncio.Queue[Optional[str]] = asyncio.Queue()
+        self.active_streams[session_id] = StreamState(
+            converter=converter, heartbeat_queue=heartbeat_queue
+        )
 
+        async def _pump_stream():
+            try:
+                async for chunk in converter.convert_stream(claude_process):
+                    await heartbeat_queue.put(chunk)
+            finally:
+                await heartbeat_queue.put(None)
+
+        heartbeat_task: Optional[asyncio.Task] = None
+        stream_task: Optional[asyncio.Task] = None
         try:
             # Start heartbeat task
-            heartbeat_task = asyncio.create_task(self._send_heartbeats(session_id))
+            heartbeat_task = asyncio.create_task(
+                self._send_heartbeats(session_id, heartbeat_queue)
+            )
 
-            # Stream conversion
-            async for chunk in converter.convert_stream(claude_process):
+            stream_task = asyncio.create_task(_pump_stream())
+            while True:
+                chunk = await heartbeat_queue.get()
+                if chunk is None:
+                    break
                 yield chunk
-
-            # Cancel heartbeat
-            heartbeat_task.cancel()
 
         except Exception as e:
             logger.error(
@@ -203,15 +205,30 @@ class StreamingManager:
             )
             yield SSEFormatter.format_error("Streaming failed")
         finally:
+            if heartbeat_task:
+                heartbeat_task.cancel()
+            if stream_task:
+                stream_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                if heartbeat_task:
+                    await heartbeat_task
+            with contextlib.suppress(asyncio.CancelledError):
+                if stream_task:
+                    await stream_task
             # Cleanup
             if session_id in self.active_streams:
                 del self.active_streams[session_id]
 
-    async def _send_heartbeats(self, session_id: str):
+    async def _send_heartbeats(
+        self, session_id: str, heartbeat_queue: asyncio.Queue[Optional[str]]
+    ):
         """Send periodic heartbeats to keep connection alive."""
-        while session_id in self.active_streams:
-            await asyncio.sleep(self.heartbeat_interval)
-            # Heartbeats are handled by the SSE client
+        try:
+            while session_id in self.active_streams:
+                await asyncio.sleep(self.heartbeat_interval)
+                await heartbeat_queue.put(SSEFormatter.format_heartbeat())
+        except asyncio.CancelledError:
+            return
 
     def get_active_stream_count(self) -> int:
         """Get number of active streams."""
@@ -346,14 +363,22 @@ def _extract_assistant_payload(
             "Found assistant message",
             message_index=i,
             content_length=len(text_content),
-            content_preview=text_content[:100] if text_content else "empty",
+        )
+        logger.debug(
+            "Found assistant message preview",
+            message_index=i,
+            content_preview="<redacted>" if text_content else "empty",
         )
         if text_content:
             content_parts.append(text_content)
             logger.info(
                 "Extracted assistant text",
                 message_index=i,
-                content_preview=text_content[:50],
+            )
+            logger.debug(
+                "Extracted assistant text preview",
+                message_index=i,
+                content_preview="<redacted>",
             )
 
         tool_uses = parser.extract_tool_uses(normalized)
@@ -398,7 +423,7 @@ def create_non_streaming_response(
     if usage is None:
         usage = OpenAIConverter.calculate_usage(parser)
 
-    finish_reason = "tool_calls" if (tool_calls and not complete_content) else "stop"
+    finish_reason = "tool_calls" if tool_calls else "stop"
 
     message_payload: Dict[str, Any] = {
         "role": "assistant",

@@ -1,6 +1,7 @@
 """Security utilities."""
 
 import os
+import re
 from pathlib import Path
 
 import structlog
@@ -43,7 +44,14 @@ def resolve_path_within_base(path: str, base_path: str) -> str:
 
         resolved_path = candidate_path.resolve(strict=False)
 
-        if not resolved_path.is_relative_to(abs_base_path):
+        try:
+            common_path = os.path.commonpath(
+                [os.fspath(abs_base_path), os.fspath(resolved_path)]
+            )
+        except ValueError:
+            common_path = ""
+
+        if common_path != os.fspath(abs_base_path):
             logger.warning(
                 "Path traversal attempt detected",
                 path=path,
@@ -68,7 +76,11 @@ def resolve_path_within_base(path: str, base_path: str) -> str:
 
 
 def ensure_directory_within_base(
-    path: str, base_path: str, *, allow_subpaths: bool = True
+    path: str,
+    base_path: str,
+    *,
+    allow_subpaths: bool = True,
+    sanitize_leaf: bool = False,
 ) -> str:
     """Validate a path within base_path and create the directory."""
     path_value = os.fspath(path)
@@ -85,8 +97,45 @@ def ensure_directory_within_base(
                     detail="Invalid path: Path separators are not allowed",
                 )
 
+    if sanitize_leaf:
+        if allow_subpaths:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid path: Sanitization only allowed for leaf paths",
+            )
+        sanitized = re.sub(r"[^A-Za-z0-9._-]", "_", path_value)
+        if not sanitized.strip("._-"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid path: Path is required",
+            )
+        path_value = sanitized
+
     resolved_path = resolve_path_within_base(path_value, base_path)
-    os.makedirs(resolved_path, exist_ok=True)
+    abs_base_path = os.path.abspath(base_path)
+    abs_resolved_path = os.path.abspath(resolved_path)
+    try:
+        common_path = os.path.commonpath([abs_base_path, abs_resolved_path])
+    except ValueError:
+        common_path = ""
+    if common_path != abs_base_path:
+        logger.warning(
+            "Path traversal attempt detected (post-validate)",
+            path=path_value,
+            resolved_path=resolved_path,
+            base_path=abs_base_path,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid path: Path traversal detected",
+        )
+    try:
+        os.makedirs(resolved_path, exist_ok=True)
+    except FileExistsError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid path: {resolved_path} exists and is not a directory",
+        ) from e
     return resolved_path
 
 

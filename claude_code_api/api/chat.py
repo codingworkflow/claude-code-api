@@ -1,5 +1,6 @@
 """Chat completions API endpoint - OpenAI compatible."""
 
+import hashlib
 import json
 from typing import Any, Dict, Tuple
 
@@ -61,12 +62,27 @@ def _http_error(
 async def _log_raw_request(req: Request) -> None:
     raw_body = await req.body()
     content_type = req.headers.get("content-type", "unknown")
+    sensitive_headers = {
+        "authorization",
+        "proxy-authorization",
+        "x-api-key",
+        "api-key",
+        "x-auth-token",
+    }
+    sanitized_headers = {}
+    for key, value in req.headers.items():
+        if key.lower() in sensitive_headers:
+            sanitized_headers[key] = "<redacted>"
+        else:
+            sanitized_headers[key] = value
+    body_hash = hashlib.sha256(raw_body).hexdigest() if raw_body else None
     logger.info(
         "Raw request received",
         content_type=content_type,
         body_size=len(raw_body),
-        user_agent=req.headers.get("user-agent", "unknown"),
-        raw_body=raw_body.decode()[:1000] if raw_body else "empty",
+        user_agent=sanitized_headers.get("user-agent", "unknown"),
+        headers=sanitized_headers,
+        body_hash=body_hash or "empty",
     )
 
 

@@ -126,6 +126,7 @@ celerybeat.pid
 # Environments
 .env.vault
 .env.cloud
+!.env
 .venv
 env/
 venv/

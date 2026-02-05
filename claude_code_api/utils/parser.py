@@ -216,14 +216,15 @@ class OpenAIConverter:
     @staticmethod
     def claude_message_to_openai(message: ClaudeMessage) -> Optional[Dict[str, Any]]:
         """Convert Claude message to OpenAI chat format."""
-        if message.is_system_message():
-            return {"role": "system", "content": message.extract_text_content()}
+        parser = ClaudeOutputParser()
+        if parser.is_system_message(message):
+            return {"role": "system", "content": parser.extract_text_content(message)}
 
-        if message.is_user_message():
-            return {"role": "user", "content": message.extract_text_content()}
+        if parser.is_user_message(message):
+            return {"role": "user", "content": parser.extract_text_content(message)}
 
-        if message.is_assistant_message():
-            content = message.extract_text_content()
+        if parser.is_assistant_message(message):
+            content = parser.extract_text_content(message)
             if content:
                 return {"role": "assistant", "content": content}
 
@@ -234,10 +235,11 @@ class OpenAIConverter:
         message: ClaudeMessage, chunk_id: str, model: str, created: int
     ) -> Optional[Dict[str, Any]]:
         """Convert Claude stream message to OpenAI chunk format."""
-        if not message.is_assistant_message():
+        parser = ClaudeOutputParser()
+        if not parser.is_assistant_message(message):
             return None
 
-        content = message.extract_text_content()
+        content = parser.extract_text_content(message)
         if not content:
             return None
 
