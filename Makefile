@@ -85,6 +85,7 @@ kill:
 
 # Quality and Security targets
 .PHONY: sonar sonar-cloud coverage-sonar sbom sbom-upload gitleaks fmt lint vet
+.PHONY: docker-validate
 
 sonar: ## Run sonar-scanner for SonarQube analysis
 	@SONAR_DIR=$(SONAR_DIR) COVERAGE_DIR=$(COVERAGE_DIR) VERSION=$(VERSION) ./scripts/run-sonar.sh
@@ -145,6 +146,9 @@ vet: ## Run type checking with mypy
 	else \
 		echo "mypy not found. Install with: pip install mypy"; \
 	fi
+
+docker-validate: ## Build Docker image and validate docker-compose
+	@./scripts/validate-docker.sh
 
 help:
 	@echo "Claude Code API Commands:"

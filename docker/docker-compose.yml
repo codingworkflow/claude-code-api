@@ -1,0 +1,35 @@
+services:
+  claude-code-api:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: claude-code-api
+    ports:
+      - "127.0.0.1:8000:8000"  # API server port
+      - "127.0.0.1:8888:8888"  # OAuth callback proxy port
+    environment:
+      # Use Claude Max subscription instead of API key
+      - USE_CLAUDE_MAX=true
+      - HOST=0.0.0.0
+      - PORT=8000
+      # Optional: Project root for Claude Code workspace
+      - CLAUDE_PROJECT_ROOT=/home/claudeuser/app/workspace
+      # OAuth proxy configuration
+      - OAUTH_PROXY_HOST=host.docker.internal
+      - OAUTH_PROXY_PORT=8888
+    volumes:
+      # Mount workspace for persistent projects
+      - ../workspace:/home/claudeuser/app/workspace
+      # Mount local Claude auth (Claude Max / Claude Code)
+      - ${HOME}/.claude:/home/claudeuser/.claude
+      # Mount Claude config to persist authentication
+      - ../claude-config:/home/claudeuser/.config/claude
+      # Optional: Mount custom config
+      - ../config:/home/claudeuser/app/config
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
