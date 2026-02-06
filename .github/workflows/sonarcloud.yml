@@ -37,7 +37,7 @@ jobs:
           args: >
             -Dsonar.host.url=https://sonarcloud.io
             -Dsonar.organization=codingworkflow
-            -Dsonar.projectKey=codingworkflow_claude-code-a-api
+            -Dsonar.projectKey=codingworkflow_claude-code-api
             -Dsonar.python.coverage.reportPaths=dist/quality/coverage/coverage.xml
             -Dsonar.python.xunit.reportPath=dist/quality/sonar/xunit-report.xml
             -Dsonar.enableIssueAnnotation=true
