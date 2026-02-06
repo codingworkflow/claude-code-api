@@ -271,6 +271,9 @@ class TestChatCompletions:
 
         response = client.post("/v1/chat/completions", json=request_data)
         assert response.status_code in [200, 503]
+        if response.status_code == 200:
+            body = response.json()
+            assert body["model"] == DEFAULT_MODEL
 
     def test_chat_completion_streaming(self, client):
         """Test streaming chat completion."""
@@ -598,7 +601,7 @@ class TestErrorHandling:
         """Test handling of invalid JSON."""
         response = client.post(
             "/v1/chat/completions",
-            data="invalid json",
+            content="invalid json",
             headers={"content-type": "application/json"},
         )
         # API returns 400 for JSON decode errors (handled manually)
@@ -606,9 +609,7 @@ class TestErrorHandling:
 
     def test_missing_required_fields(self, client):
         """Allow missing model and rely on CLI default model selection."""
-        request_data = {
-            "messages": [{"role": "user", "content": "Hi"}]
-        }
+        request_data = {"messages": [{"role": "user", "content": "Hi"}]}
 
         response = client.post("/v1/chat/completions", json=request_data)
         assert response.status_code in [200, 503]
@@ -689,10 +690,6 @@ class TestRealWorldScenarios:
         data = response.json()
         assert "choices" in data
         assert len(data["choices"]) > 0
-
-
-# Test configuration and markers
-pytestmark = pytest.mark.asyncio
 
 
 if __name__ == "__main__":

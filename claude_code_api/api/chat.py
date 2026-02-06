@@ -297,7 +297,9 @@ async def create_chat_completion(request: ChatCompletionRequest, req: Request) -
     try:
         requested_model = (request.model or "").strip() or None
         # Normalize only when user explicitly requested a model.
-        claude_model = validate_claude_model(requested_model) if requested_model else None
+        claude_model = (
+            validate_claude_model(requested_model) if requested_model else None
+        )
         response_model = claude_model or get_default_model()
 
         user_prompt, system_prompt = _extract_prompts(request)
@@ -337,10 +339,10 @@ async def create_chat_completion(request: ChatCompletionRequest, req: Request) -
             )
             raise _http_error(
                 status.HTTP_409_CONFLICT,
-                str(e),
+                "The session is currently busy with another process.",
                 "invalid_request_error",
                 "session_busy",
-            )
+            ) from e
         except ClaudeModelNotSupportedError as e:
             logger.warning(
                 "Claude rejected requested model",
@@ -350,10 +352,10 @@ async def create_chat_completion(request: ChatCompletionRequest, req: Request) -
             )
             raise _http_error(
                 status.HTTP_400_BAD_REQUEST,
-                str(e),
+                "The requested model is not supported.",
                 "invalid_request_error",
                 "model_not_supported",
-            )
+            ) from e
         except Exception as e:
             logger.error(
                 "Failed to create Claude session", session_id=session_id, error=str(e)

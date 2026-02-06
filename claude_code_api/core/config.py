@@ -163,9 +163,11 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     log_format: str = "json"
     log_file_path: str = default_log_file_path()
+    log_to_file: bool = True
     log_max_bytes: int = 10 * 1024 * 1024
     log_backup_count: int = 5
     log_to_console: bool = True
+    log_min_level_when_not_debug: str = "WARNING"
 
     # CORS Configuration
     allowed_origins: List[str] = Field(

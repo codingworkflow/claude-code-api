@@ -184,6 +184,39 @@ async def test_create_session_raises_when_model_rejected_without_fallback(
 
 
 @pytest.mark.asyncio
+async def test_create_session_raises_for_non_model_start_failure_without_fallback(
+    monkeypatch, tmp_path
+):
+    manager = cm.ClaudeManager()
+    attempted_models = []
+
+    monkeypatch.setattr(
+        cm,
+        "get_available_models",
+        lambda: [types.SimpleNamespace(id="claude-opus-4-5-20251101")],
+    )
+
+    async def fake_start(self, prompt, model=None, system_prompt=None):
+        attempted_models.append(model)
+        self.last_error = "failed to spawn process"
+        self.is_running = False
+        return False
+
+    monkeypatch.setattr(cm.ClaudeProcess, "start", fake_start)
+
+    with pytest.raises(cm.ClaudeProcessStartError):
+        await manager.create_session(
+            session_id="sess-process-error",
+            project_path=str(tmp_path),
+            prompt="prompt",
+            model="claude-opus-4-6-20260205",
+        )
+
+    assert attempted_models == ["claude-opus-4-6-20260205"]
+    await manager.cleanup_all()
+
+
+@pytest.mark.asyncio
 async def test_create_session_without_model_does_not_force_model_flag(
     monkeypatch, tmp_path
 ):

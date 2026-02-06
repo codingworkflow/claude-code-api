@@ -42,7 +42,10 @@ class ClaudeProcess:
         self._stderr_tail: deque[str] = deque(maxlen=20)
 
     async def start(
-        self, prompt: str, model: str = None, system_prompt: str = None
+        self,
+        prompt: str,
+        model: Optional[str] = None,
+        system_prompt: Optional[str] = None,
     ) -> bool:
         """Start Claude Code process and wait for completion."""
         self.last_error = None
@@ -115,6 +118,7 @@ class ClaudeProcess:
 
         except Exception as e:
             self.last_error = str(e)
+            await self.stop()
             logger.error(
                 "Failed to start Claude process",
                 session_id=self.session_id,
@@ -502,7 +506,7 @@ class ClaudeManager:
         """Create new Claude session."""
         async with self._session_lock:
             self._ensure_session_capacity(session_id)
-            os.makedirs(project_path, exist_ok=True)
+            await asyncio.to_thread(os.makedirs, project_path, exist_ok=True)
 
             return await self._start_with_fallback_models(
                 session_id=session_id,
@@ -512,6 +516,21 @@ class ClaudeManager:
                 system_prompt=system_prompt,
                 on_cli_session_id=on_cli_session_id,
             )
+
+    async def _stop_session_locked(self, session_id: str) -> None:
+        resolved_id = self._resolve_session_id(session_id)
+        if not resolved_id or resolved_id not in self.processes:
+            return
+
+        process = self.processes[resolved_id]
+        await process.stop()
+        self._cleanup_process(process)
+
+        logger.info(
+            "Claude session stopped",
+            session_id=resolved_id,
+            active_sessions=len(self.processes),
+        )
 
     def get_session(self, session_id: str) -> Optional[ClaudeProcess]:
         """Get existing Claude session."""
@@ -523,22 +542,13 @@ class ClaudeManager:
     async def stop_session(self, session_id: str):
         """Stop Claude session."""
         async with self._session_lock:
-            resolved_id = self._resolve_session_id(session_id)
-            if resolved_id and resolved_id in self.processes:
-                process = self.processes[resolved_id]
-                await process.stop()
-                self._cleanup_process(process)
-
-                logger.info(
-                    "Claude session stopped",
-                    session_id=resolved_id,
-                    active_sessions=len(self.processes),
-                )
+            await self._stop_session_locked(session_id)
 
     async def cleanup_all(self):
         """Stop all Claude sessions."""
-        for session_id in tuple(self.processes):
-            await self.stop_session(session_id)
+        async with self._session_lock:
+            for session_id in tuple(self.processes):
+                await self._stop_session_locked(session_id)
 
         logger.info("All Claude sessions cleaned up")
 

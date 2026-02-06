@@ -26,15 +26,14 @@ from claude_code_api.core.logging_config import configure_logging
 from claude_code_api.core.session_manager import SessionManager
 from claude_code_api.models.openai import ChatCompletionChunk
 
-# Configure structured logging in one place.
-configure_logging(settings)
-
 logger = structlog.get_logger()
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Application lifespan manager."""
+    # Configure logging during startup so import-time failures don't abort module load.
+    configure_logging(settings)
     logger.info("Starting Claude Code API Gateway", version="1.0.0")
 
     # Initialize database
@@ -133,7 +132,11 @@ async def http_exception_handler(request, exc):
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request, exc):
     """Return OpenAI-style errors for validation failures."""
-    status_code = status.HTTP_422_UNPROCESSABLE_ENTITY
+    status_code = getattr(
+        status,
+        "HTTP_422_UNPROCESSABLE_CONTENT",
+        status.HTTP_422_UNPROCESSABLE_ENTITY,
+    )
     for error in exc.errors():
         if error.get("type") in {"value_error.jsondecode", "json_invalid"}:
             status_code = status.HTTP_400_BAD_REQUEST

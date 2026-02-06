@@ -107,14 +107,14 @@ class SessionManager:
             directory = os.path.dirname(self.session_map_path) or os.getcwd()
             os.makedirs(directory, exist_ok=True)
             payload = {"cli_to_api": self.cli_session_index}
-            lock_handle = None
 
             with self._persist_lock:
-                try:
+                lock_path = f"{self.session_map_path}.lock"
+                with open(lock_path, "a+", encoding="utf-8") as lock_handle:
+                    lock_acquired = False
                     if fcntl:
-                        lock_path = f"{self.session_map_path}.lock"
-                        lock_handle = open(lock_path, "a+", encoding="utf-8")
                         fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX)
+                        lock_acquired = True
 
                     tmp_path = None
                     fd, tmp_path = tempfile.mkstemp(
@@ -124,18 +124,21 @@ class SessionManager:
                     )
 
                     try:
-                        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                        try:
+                            handle = os.fdopen(fd, "w", encoding="utf-8")
+                        except Exception:
+                            os.close(fd)
+                            raise
+                        with handle:
                             json.dump(payload, handle, indent=2, sort_keys=True)
                             handle.flush()
                             os.fsync(handle.fileno())
                         os.replace(tmp_path, self.session_map_path)
                     finally:
+                        if lock_acquired:
+                            fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
                         if tmp_path and os.path.exists(tmp_path):
                             os.remove(tmp_path)
-                finally:
-                    if lock_handle and fcntl:
-                        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
-                        lock_handle.close()
         except Exception as exc:
             logger.warning("Failed to persist session map", error=str(exc))
 

@@ -5,6 +5,13 @@ if "%~1"=="" goto :help
 
 set "TARGET=%~1"
 shift
+set "EXTRA_ARGS="
+:collect_args
+if "%~1"=="" goto :args_done
+set "EXTRA_ARGS=!EXTRA_ARGS! %~1"
+shift
+goto :collect_args
+:args_done
 
 call :find_python
 if errorlevel 1 exit /b 1
@@ -53,11 +60,11 @@ exit /b %ERRORLEVEL%
 exit /b %ERRORLEVEL%
 
 :test
-%PYTHON_CMD% -m pytest --cov=claude_code_api --cov-report=html tests/ -v %*
+%PYTHON_CMD% -m pytest --cov=claude_code_api --cov-report=html tests/ -v %EXTRA_ARGS%
 exit /b %ERRORLEVEL%
 
 :test_no_cov
-%PYTHON_CMD% -m pytest tests/ -v %*
+%PYTHON_CMD% -m pytest tests/ -v %EXTRA_ARGS%
 exit /b %ERRORLEVEL%
 
 :fmt
