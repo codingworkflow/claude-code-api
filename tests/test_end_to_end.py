@@ -20,6 +20,10 @@ import pytest
 from fastapi.testclient import TestClient
 from httpx import AsyncClient
 
+from claude_code_api.core.claude_manager import (
+    ClaudeModelNotSupportedError,
+    ClaudeSessionConflictError,
+)
 from claude_code_api.core.config import settings
 from claude_code_api.core.session_manager import SessionManager
 from claude_code_api.main import app
@@ -258,6 +262,16 @@ class TestChatCompletions:
         # Should work with fallback to default model
         assert response.status_code in [200, 503]  # 503 if Claude not available
 
+    def test_chat_completion_without_model_uses_cli_default_behavior(self, client):
+        """Omitting model should still work and avoid requiring model in request body."""
+        request_data = {
+            "messages": [{"role": "user", "content": "What's 2+2?"}],
+            "stream": False,
+        }
+
+        response = client.post("/v1/chat/completions", json=request_data)
+        assert response.status_code in [200, 503]
+
     def test_chat_completion_streaming(self, client):
         """Test streaming chat completion."""
         request_data = {
@@ -374,6 +388,48 @@ class TestChatCompletions:
         # Should still work as model gets converted to default
         assert response.status_code in [200, 503]  # 503 if Claude not available
 
+    def test_chat_completion_returns_conflict_for_busy_session(
+        self, client, monkeypatch
+    ):
+        """Return HTTP 409 when an API session already has an active process."""
+        claude_manager = client.app.state.claude_manager
+
+        async def fake_create_session(*args, **kwargs):
+            raise ClaudeSessionConflictError("Session busy")
+
+        monkeypatch.setattr(claude_manager, "create_session", fake_create_session)
+
+        request_data = {
+            "model": DEFAULT_MODEL,
+            "messages": [{"role": "user", "content": "Hi"}],
+            "stream": False,
+        }
+
+        response = client.post("/v1/chat/completions", json=request_data)
+        assert response.status_code == 409
+        data = response.json()
+        assert data["error"]["code"] == "session_busy"
+
+    def test_chat_completion_returns_model_not_supported(self, client, monkeypatch):
+        """Return HTTP 400 when Claude rejects the requested model."""
+        claude_manager = client.app.state.claude_manager
+
+        async def fake_create_session(*args, **kwargs):
+            raise ClaudeModelNotSupportedError("Unsupported model details")
+
+        monkeypatch.setattr(claude_manager, "create_session", fake_create_session)
+
+        request_data = {
+            "model": DEFAULT_MODEL,
+            "messages": [{"role": "user", "content": "Hi"}],
+            "stream": False,
+        }
+
+        response = client.post("/v1/chat/completions", json=request_data)
+        assert response.status_code == 400
+        data = response.json()
+        assert data["error"]["code"] == "model_not_supported"
+
 
 class TestConversationFlow:
     """Test conversation flow and session management."""
@@ -412,6 +468,7 @@ class TestConversationFlow:
             response_2 = client.post("/v1/chat/completions", json=request_data_2)
             assert response_2.status_code in [
                 200,
+                409,
                 404,
                 503,
             ]  # May fail if session management incomplete
@@ -548,14 +605,13 @@ class TestErrorHandling:
         assert response.status_code == 400
 
     def test_missing_required_fields(self, client):
-        """Test handling of missing required fields."""
+        """Allow missing model and rely on CLI default model selection."""
         request_data = {
             "messages": [{"role": "user", "content": "Hi"}]
-            # Missing required "model" field
         }
 
         response = client.post("/v1/chat/completions", json=request_data)
-        assert response.status_code == 422  # Validation error
+        assert response.status_code in [200, 503]
 
     def test_invalid_message_role(self, client):
         """Test handling of invalid message role."""

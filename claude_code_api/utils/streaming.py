@@ -223,12 +223,9 @@ class StreamingManager:
         self, session_id: str, heartbeat_queue: asyncio.Queue[Optional[str]]
     ):
         """Send periodic heartbeats to keep connection alive."""
-        try:
-            while session_id in self.active_streams:
-                await asyncio.sleep(self.heartbeat_interval)
-                await heartbeat_queue.put(SSEFormatter.format_heartbeat())
-        except asyncio.CancelledError:
-            raise
+        while session_id in self.active_streams:
+            await asyncio.sleep(self.heartbeat_interval)
+            await heartbeat_queue.put(SSEFormatter.format_heartbeat())
 
     def get_active_stream_count(self) -> int:
         """Get number of active streams."""

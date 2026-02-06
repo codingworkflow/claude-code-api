@@ -4,11 +4,12 @@ import asyncio
 import json
 import os
 import subprocess
+from collections import deque
 from typing import Any, AsyncGenerator, Callable, Dict, List, Optional
 
 import structlog
 
-from claude_code_api.models.claude import get_default_model
+from claude_code_api.models.claude import get_available_models, get_default_model
 
 from .config import settings
 from .security import ensure_directory_within_base
@@ -37,11 +38,14 @@ class ClaudeProcess:
         self._error_task: Optional[asyncio.Task] = None
         self._on_cli_session_id = on_cli_session_id
         self._on_end = on_end
+        self.last_error: Optional[str] = None
+        self._stderr_tail: deque[str] = deque(maxlen=20)
 
     async def start(
         self, prompt: str, model: str = None, system_prompt: str = None
     ) -> bool:
         """Start Claude Code process and wait for completion."""
+        self.last_error = None
         try:
             # Prepare real command - using exact format from working Claudia example
             cmd = [settings.claude_binary_path]
@@ -102,9 +106,15 @@ class ClaudeProcess:
             self._output_task = asyncio.create_task(self._read_output())
             self._error_task = asyncio.create_task(self._read_error())
 
+            started = await self._verify_startup()
+            if not started:
+                await self.stop()
+                return False
+
             return True
 
         except Exception as e:
+            self.last_error = str(e)
             logger.error(
                 "Failed to start Claude process",
                 session_id=self.session_id,
@@ -172,9 +182,45 @@ class ClaudeProcess:
 
                 error_text = line.decode().strip()
                 if error_text:
+                    self._stderr_tail.append(error_text)
+                    self.last_error = error_text
                     logger.warning("Claude stderr", message=error_text)
         except Exception as e:
             logger.error("Error reading stderr", error=str(e))
+
+    async def _verify_startup(self) -> bool:
+        """Detect early process failures so API can return actionable errors."""
+        if not self.process:
+            self.last_error = "Claude process was not initialized"
+            return False
+
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + 1.5
+        while loop.time() < deadline:
+            return_code = self.process.returncode
+            if return_code is None:
+                await asyncio.sleep(0.05)
+                continue
+
+            if return_code == 0:
+                return True
+
+            error_text = self._compose_process_error(return_code)
+            self.last_error = error_text
+            logger.error(
+                "Claude process exited during startup",
+                session_id=self.session_id,
+                return_code=return_code,
+                error=error_text,
+            )
+            return False
+
+        return True
+
+    def _compose_process_error(self, return_code: int) -> str:
+        if self._stderr_tail:
+            return f"Claude exited with code {return_code}: {' | '.join(self._stderr_tail)}"
+        return f"Claude exited with code {return_code}"
 
     async def get_output(self) -> AsyncGenerator[Dict[str, Any], None]:
         """Get output from Claude process."""
@@ -257,6 +303,42 @@ class ClaudeProcessStartError(ClaudeManagerError):
     """Raised when a Claude process fails to start."""
 
 
+class ClaudeSessionConflictError(ClaudeManagerError):
+    """Raised when a session already has an active Claude process."""
+
+
+class ClaudeModelNotSupportedError(ClaudeManagerError):
+    """Raised when Claude rejects a requested model."""
+
+
+def _is_model_rejection_error(error_message: str) -> bool:
+    lowered = (error_message or "").lower()
+    patterns = (
+        "invalid model",
+        "unknown model",
+        "model not found",
+        "unsupported model",
+        "not support model",
+        "not a valid model",
+    )
+    return any(pattern in lowered for pattern in patterns)
+
+
+def _resolve_opus_45_fallback(model_id: Optional[str]) -> Optional[str]:
+    if not model_id or not model_id.startswith("claude-opus-4-6-"):
+        return None
+
+    opus_45_models = sorted(
+        model.id
+        for model in get_available_models()
+        if model.id.startswith("claude-opus-4-5-")
+    )
+    if not opus_45_models:
+        return None
+
+    return opus_45_models[-1]
+
+
 class ClaudeManager:
     """Manages multiple Claude Code processes."""
 
@@ -264,6 +346,7 @@ class ClaudeManager:
         self.processes: Dict[str, ClaudeProcess] = {}
         self.cli_session_index: Dict[str, str] = {}
         self.max_concurrent = settings.max_concurrent_sessions
+        self._session_lock = asyncio.Lock()
 
     async def get_version(self) -> str:
         """Get Claude Code version."""
@@ -292,57 +375,143 @@ class ClaudeManager:
                 f"Failed to get Claude version: {str(exc)}"
             ) from exc
 
-    async def create_session(
-        self,
-        session_id: str,
-        project_path: str,
-        prompt: str,
-        model: str = None,
-        system_prompt: str = None,
-        on_cli_session_id: Optional[Callable[[str], None]] = None,
-    ) -> ClaudeProcess:
-        """Create new Claude session."""
-        # Check concurrent session limit
+    def _ensure_session_capacity(self, session_id: str) -> None:
+        existing_process = self.processes.get(session_id)
+        if existing_process and existing_process.is_running:
+            raise ClaudeSessionConflictError(
+                f"Session {session_id} already has an active Claude process"
+            )
+        if existing_process and not existing_process.is_running:
+            self._cleanup_process(existing_process)
+
         if len(self.processes) >= self.max_concurrent:
             raise ClaudeConcurrencyError(
                 f"Maximum concurrent sessions ({self.max_concurrent}) reached"
             )
 
-        # Ensure project directory exists
-        os.makedirs(project_path, exist_ok=True)
+    def _build_model_candidates(self, model: Optional[str]) -> List[Optional[str]]:
+        candidates: List[Optional[str]] = [model]
+        fallback_model = _resolve_opus_45_fallback(model)
+        if fallback_model and fallback_model not in candidates:
+            candidates.append(fallback_model)
+        return candidates
 
-        # Create process
+    def _create_process(
+        self,
+        session_id: str,
+        project_path: str,
+        on_cli_session_id: Optional[Callable[[str], None]],
+    ) -> ClaudeProcess:
         def _handle_cli_session_id(cli_session_id: str):
             self._register_cli_session(session_id, cli_session_id)
             if on_cli_session_id:
                 on_cli_session_id(cli_session_id)
 
-        process = ClaudeProcess(
+        return ClaudeProcess(
             session_id=session_id,
             project_path=project_path,
             on_cli_session_id=_handle_cli_session_id,
             on_end=self._cleanup_process,
         )
 
-        # Start process
-        success = await process.start(
-            prompt=prompt,
-            model=model or get_default_model(),
-            system_prompt=system_prompt,
+    def _raise_model_not_supported(
+        self,
+        selected_model: Optional[str],
+        model_candidates: List[Optional[str]],
+        last_error: str,
+    ) -> None:
+        available = ", ".join(model.id for model in get_available_models())
+        raise ClaudeModelNotSupportedError(
+            f"Claude rejected model '{selected_model or '<cli-default>'}'. "
+            f"Attempted: {', '.join(str(m) for m in model_candidates)}. "
+            f"Configured models: {available}. "
+            f"Details: {last_error}"
         )
 
-        if not success:
-            raise ClaudeProcessStartError("Failed to start Claude process")
+    async def _start_with_fallback_models(
+        self,
+        session_id: str,
+        project_path: str,
+        prompt: str,
+        selected_model: Optional[str],
+        system_prompt: Optional[str],
+        on_cli_session_id: Optional[Callable[[str], None]],
+    ) -> ClaudeProcess:
+        model_candidates = self._build_model_candidates(selected_model)
+        last_error = "Failed to start Claude process"
 
-        self.processes[session_id] = process
+        for idx, candidate_model in enumerate(model_candidates):
+            process = self._create_process(
+                session_id=session_id,
+                project_path=project_path,
+                on_cli_session_id=on_cli_session_id,
+            )
+            success = await process.start(
+                prompt=prompt,
+                model=candidate_model,
+                system_prompt=system_prompt,
+            )
 
-        logger.info(
-            "Claude session created",
-            session_id=process.session_id,
-            active_sessions=len(self.processes),
-        )
+            if success:
+                self.processes[session_id] = process
+                if idx > 0:
+                    logger.warning(
+                        "Model fallback activated after rejection",
+                        requested_model=selected_model or "<cli-default>",
+                        fallback_model=candidate_model,
+                        session_id=session_id,
+                    )
+                logger.info(
+                    "Claude session created",
+                    session_id=process.session_id,
+                    active_sessions=len(self.processes),
+                )
+                return process
 
-        return process
+            last_error = process.last_error or last_error
+            if not _is_model_rejection_error(last_error):
+                raise ClaudeProcessStartError(last_error)
+
+            has_next_candidate = idx + 1 < len(model_candidates)
+            if has_next_candidate:
+                logger.warning(
+                    "Claude rejected model, retrying with fallback",
+                    rejected_model=candidate_model,
+                    fallback_model=model_candidates[idx + 1],
+                    error=last_error,
+                )
+                continue
+
+            self._raise_model_not_supported(
+                selected_model=selected_model,
+                model_candidates=model_candidates,
+                last_error=last_error,
+            )
+
+        raise ClaudeProcessStartError(last_error)
+
+    async def create_session(
+        self,
+        session_id: str,
+        project_path: str,
+        prompt: str,
+        model: Optional[str] = None,
+        system_prompt: Optional[str] = None,
+        on_cli_session_id: Optional[Callable[[str], None]] = None,
+    ) -> ClaudeProcess:
+        """Create new Claude session."""
+        async with self._session_lock:
+            self._ensure_session_capacity(session_id)
+            os.makedirs(project_path, exist_ok=True)
+
+            return await self._start_with_fallback_models(
+                session_id=session_id,
+                project_path=project_path,
+                prompt=prompt,
+                selected_model=model,
+                system_prompt=system_prompt,
+                on_cli_session_id=on_cli_session_id,
+            )
 
     def get_session(self, session_id: str) -> Optional[ClaudeProcess]:
         """Get existing Claude session."""
@@ -353,17 +522,18 @@ class ClaudeManager:
 
     async def stop_session(self, session_id: str):
         """Stop Claude session."""
-        resolved_id = self._resolve_session_id(session_id)
-        if resolved_id and resolved_id in self.processes:
-            process = self.processes[resolved_id]
-            await process.stop()
-            self._cleanup_process(process)
+        async with self._session_lock:
+            resolved_id = self._resolve_session_id(session_id)
+            if resolved_id and resolved_id in self.processes:
+                process = self.processes[resolved_id]
+                await process.stop()
+                self._cleanup_process(process)
 
-            logger.info(
-                "Claude session stopped",
-                session_id=resolved_id,
-                active_sessions=len(self.processes),
-            )
+                logger.info(
+                    "Claude session stopped",
+                    session_id=resolved_id,
+                    active_sessions=len(self.processes),
+                )
 
     async def cleanup_all(self):
         """Stop all Claude sessions."""

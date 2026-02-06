@@ -64,6 +64,11 @@ def default_session_map_path() -> str:
     return os.path.join(os.getcwd(), "claude_sessions", "session_map.json")
 
 
+def default_log_file_path() -> str:
+    """Default path for application logs."""
+    return os.path.join(os.getcwd(), "dist", "logs", "claude-code-api.log")
+
+
 def _is_shell_script_line(line: str) -> bool:
     if not line:
         return False
@@ -157,6 +162,10 @@ class Settings(BaseSettings):
     # Logging Configuration
     log_level: str = "INFO"
     log_format: str = "json"
+    log_file_path: str = default_log_file_path()
+    log_max_bytes: int = 10 * 1024 * 1024
+    log_backup_count: int = 5
+    log_to_console: bool = True
 
     # CORS Configuration
     allowed_origins: List[str] = Field(

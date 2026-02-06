@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 from datetime import datetime
 from enum import Enum
 from functools import lru_cache
@@ -231,6 +232,9 @@ class ClaudeModelInfo(BaseModel):
 
 MODELS_CONFIG_ENV = "CLAUDE_CODE_API_MODELS_PATH"
 DEFAULT_MODELS_PATH = Path(__file__).resolve().parents[1] / "config" / "models.json"
+MODEL_ID_PATTERN = re.compile(
+    r"^claude-(?P<tier>[a-z]+)-(?P<major>\d+)-(?P<minor>\d+)(?:-(?P<stamp>\d+))?$"
+)
 
 
 def _models_config_path() -> Path:
@@ -264,12 +268,95 @@ def _model_index() -> Dict[str, ClaudeModelInfo]:
     return model_map
 
 
+def _config_alias_pairs(raw_aliases: Any) -> List[tuple[str, str]]:
+    if not isinstance(raw_aliases, dict):
+        return []
+    return [
+        (alias, target)
+        for alias, target in raw_aliases.items()
+        if isinstance(alias, str) and isinstance(target, str)
+    ]
+
+
+def _entry_alias_pairs(entry: Any) -> List[tuple[str, str]]:
+    if not isinstance(entry, dict):
+        return []
+
+    model_id = entry.get("id")
+    model_aliases = entry.get("aliases", [])
+    if not isinstance(model_id, str) or not isinstance(model_aliases, list):
+        return []
+
+    return [(alias, model_id) for alias in model_aliases if isinstance(alias, str)]
+
+
+def _model_alias_index() -> Dict[str, str]:
+    config = _load_models_config()
+    aliases = dict(_config_alias_pairs(config.get("aliases", {})))
+    for entry in config.get("models", []):
+        aliases.update(_entry_alias_pairs(entry))
+    return aliases
+
+
+def _parse_model_id(model_id: str) -> Optional[tuple[str, int, int, int]]:
+    match = MODEL_ID_PATTERN.match(model_id)
+    if not match:
+        return None
+
+    stamp = match.group("stamp")
+    return (
+        match.group("tier"),
+        int(match.group("major")),
+        int(match.group("minor")),
+        int(stamp) if stamp else 0,
+    )
+
+
+def _latest_model_for_tier(tier: str) -> Optional[str]:
+    ranked_models = []
+    for model_id in _model_index():
+        parsed = _parse_model_id(model_id)
+        if not parsed:
+            continue
+        parsed_tier, major, minor, stamp = parsed
+        if parsed_tier != tier:
+            continue
+        ranked_models.append((major, minor, stamp, model_id))
+
+    if not ranked_models:
+        return None
+
+    ranked_models.sort()
+    return ranked_models[-1][3]
+
+
+def _resolve_alias(model: str) -> Optional[str]:
+    model_map = _model_index()
+    target = _model_alias_index().get(model)
+    if target and target in model_map:
+        return target
+    return None
+
+
 # Utility functions for model validation
 def validate_claude_model(model: str) -> str:
     """Validate and normalize Claude model name."""
     model_map = _model_index()
-    if model in model_map:
-        return model
+    normalized = (model or "").strip()
+
+    if normalized in model_map:
+        return normalized
+
+    aliased = _resolve_alias(normalized)
+    if aliased:
+        return aliased
+
+    parsed = _parse_model_id(normalized)
+    if parsed and parsed[0] == "opus":
+        latest_opus = _latest_model_for_tier("opus")
+        if latest_opus:
+            return latest_opus
+
     return get_default_model()
 
 
@@ -288,9 +375,8 @@ def get_default_model() -> str:
 def get_model_info(model_id: str) -> ClaudeModelInfo:
     """Get information about a Claude model."""
     model_map = _model_index()
-    if model_id in model_map:
-        return model_map[model_id]
-    return model_map[get_default_model()]
+    resolved_model_id = validate_claude_model(model_id)
+    return model_map[resolved_model_id]
 
 
 def get_available_models() -> List[ClaudeModelInfo]:

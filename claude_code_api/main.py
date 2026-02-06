@@ -22,27 +22,12 @@ from claude_code_api.core.auth import auth_middleware
 from claude_code_api.core.claude_manager import ClaudeManager
 from claude_code_api.core.config import settings
 from claude_code_api.core.database import close_database, create_tables
+from claude_code_api.core.logging_config import configure_logging
 from claude_code_api.core.session_manager import SessionManager
 from claude_code_api.models.openai import ChatCompletionChunk
 
-# Configure structured logging
-structlog.configure(
-    processors=[
-        structlog.stdlib.filter_by_level,
-        structlog.stdlib.add_logger_name,
-        structlog.stdlib.add_log_level,
-        structlog.stdlib.PositionalArgumentsFormatter(),
-        structlog.processors.TimeStamper(fmt="iso"),
-        structlog.processors.StackInfoRenderer(),
-        structlog.processors.format_exc_info,
-        structlog.processors.UnicodeDecoder(),
-        structlog.processors.JSONRenderer(),
-    ],
-    context_class=dict,
-    logger_factory=structlog.stdlib.LoggerFactory(),
-    wrapper_class=structlog.stdlib.BoundLogger,
-    cache_logger_on_first_use=True,
-)
+# Configure structured logging in one place.
+configure_logging(settings)
 
 logger = structlog.get_logger()
 

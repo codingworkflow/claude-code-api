@@ -1,6 +1,25 @@
 {
   "default_model": "claude-sonnet-4-5-20250929",
+  "aliases": {
+    "opus": "claude-opus-4-6-20260205",
+    "sonnet": "claude-sonnet-4-5-20250929",
+    "haiku": "claude-haiku-4-5-20251001",
+    "claude-opus-latest": "claude-opus-4-6-20260205",
+    "claude-opus-4-6": "claude-opus-4-6-20260205",
+    "claude-opus-4-5": "claude-opus-4-5-20251101",
+    "claude-opus-4-5-latest": "claude-opus-4-6-20260205"
+  },
   "models": [
+    {
+      "id": "claude-opus-4-6-20260205",
+      "name": "Claude Opus 4.6",
+      "description": "Latest Opus model with improved reasoning and coding",
+      "max_tokens": 65536,
+      "input_cost_per_1k": 0.005,
+      "output_cost_per_1k": 0.025,
+      "supports_streaming": true,
+      "supports_tools": true
+    },
     {
       "id": "claude-opus-4-5-20251101",
       "name": "Claude Opus 4.5",

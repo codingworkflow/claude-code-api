@@ -1,5 +1,6 @@
 """Unit tests for session manager behaviors."""
 
+import json
 import types
 from datetime import timedelta
 
@@ -79,4 +80,20 @@ async def test_session_stats():
     assert stats["total_cost"] == 2.0
     assert stats["total_messages"] == 3
     assert set(stats["models_in_use"]) == {"m1", "m2"}
+    await manager.cleanup_all()
+
+
+@pytest.mark.asyncio
+async def test_persist_cli_session_map_writes_expected_payload(tmp_path):
+    manager = SessionManager()
+    manager.session_map_path = str(tmp_path / "maps" / "session_map.json")
+    manager.cli_session_index = {"cli-1": "api-1"}
+
+    manager._persist_cli_session_map()
+
+    with open(manager.session_map_path, "r", encoding="utf-8") as handle:
+        payload = json.load(handle)
+    assert payload["cli_to_api"]["cli-1"] == "api-1"
+    assert list((tmp_path / "maps").glob("session_map_*.tmp")) == []
+
     await manager.cleanup_all()

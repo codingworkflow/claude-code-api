@@ -2,16 +2,20 @@
 
 import hashlib
 import json
-from typing import Any, Dict, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 import structlog
 from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 from pydantic import ValidationError
 
-from claude_code_api.core.claude_manager import create_project_directory
+from claude_code_api.core.claude_manager import (
+    ClaudeModelNotSupportedError,
+    ClaudeSessionConflictError,
+    create_project_directory,
+)
 from claude_code_api.core.session_manager import SessionManager
-from claude_code_api.models.claude import validate_claude_model
+from claude_code_api.models.claude import get_default_model, validate_claude_model
 from claude_code_api.models.openai import (
     ChatCompletionRequest,
     ChatCompletionResponse,
@@ -116,8 +120,8 @@ async def _resolve_session(
     session_manager: SessionManager,
     request: ChatCompletionRequest,
     project_id: str,
-    claude_model: str,
-    system_prompt: str,
+    claude_model: Optional[str],
+    system_prompt: Optional[str],
 ) -> str:
     if request.session_id:
         session_id = request.session_id
@@ -291,8 +295,10 @@ async def create_chat_completion(request: ChatCompletionRequest, req: Request) -
     )
 
     try:
-        # Validate model
-        claude_model = validate_claude_model(request.model)
+        requested_model = (request.model or "").strip() or None
+        # Normalize only when user explicitly requested a model.
+        claude_model = validate_claude_model(requested_model) if requested_model else None
+        response_model = claude_model or get_default_model()
 
         user_prompt, system_prompt = _extract_prompts(request)
 
@@ -323,6 +329,31 @@ async def create_chat_completion(request: ChatCompletionRequest, req: Request) -
                 system_prompt=system_prompt,
                 on_cli_session_id=_register_cli_session,
             )
+        except ClaudeSessionConflictError as e:
+            logger.warning(
+                "Session already has an active Claude process",
+                session_id=session_id,
+                error=str(e),
+            )
+            raise _http_error(
+                status.HTTP_409_CONFLICT,
+                str(e),
+                "invalid_request_error",
+                "session_busy",
+            )
+        except ClaudeModelNotSupportedError as e:
+            logger.warning(
+                "Claude rejected requested model",
+                session_id=session_id,
+                model=claude_model,
+                error=str(e),
+            )
+            raise _http_error(
+                status.HTTP_400_BAD_REQUEST,
+                str(e),
+                "invalid_request_error",
+                "model_not_supported",
+            )
         except Exception as e:
             logger.error(
                 "Failed to create Claude session", session_id=session_id, error=str(e)
@@ -348,7 +379,7 @@ async def create_chat_completion(request: ChatCompletionRequest, req: Request) -
         # Handle streaming vs non-streaming
         if request.stream:
             return StreamingResponse(
-                create_sse_response(api_session_id, claude_model, claude_process),
+                create_sse_response(api_session_id, response_model, claude_process),
                 media_type="text/event-stream",
                 headers={
                     "Cache-Control": "no-cache",
@@ -363,7 +394,7 @@ async def create_chat_completion(request: ChatCompletionRequest, req: Request) -
             claude_process=claude_process,
             session_manager=session_manager,
             session_id=api_session_id,
-            model=claude_model,
+            model=response_model,
             project_id=project_id,
         )
 

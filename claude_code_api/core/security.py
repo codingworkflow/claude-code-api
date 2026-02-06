@@ -8,6 +8,8 @@ from fastapi import HTTPException, status
 
 logger = structlog.get_logger()
 
+PATH_TRAVERSAL_MSG = "Invalid path: Path traversal detected"
+
 
 def _bad_request(detail: str) -> HTTPException:
     return HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail)
@@ -42,7 +44,7 @@ def _ensure_within_base(path_value: str, base_path: str, resolved_path: str) -> 
             resolved_path=resolved_path,
             base_path=abs_base_path,
         )
-        raise _bad_request("Invalid path: Path traversal detected")
+        raise _bad_request(PATH_TRAVERSAL_MSG)
 
 
 def resolve_path_within_base(path: str, base_path: str) -> str:
@@ -79,7 +81,7 @@ def resolve_path_within_base(path: str, base_path: str) -> str:
             if normalized_path == ".." or normalized_path.startswith(f"..{os.path.sep}"):
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Invalid path: Path traversal detected",
+                    detail=PATH_TRAVERSAL_MSG,
                 )
         if os.path.isabs(normalized_path):
             resolved_path = os.path.realpath(normalized_path)
@@ -100,7 +102,7 @@ def resolve_path_within_base(path: str, base_path: str) -> str:
             )
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid path: Path traversal detected",
+                detail=PATH_TRAVERSAL_MSG,
             )
 
         return resolved_path

@@ -3,8 +3,10 @@
 import asyncio
 import json
 import os
+import tempfile
 import uuid
 from datetime import timedelta
+from threading import Lock
 from typing import Any, Dict, List, Optional
 
 import structlog
@@ -15,6 +17,14 @@ from claude_code_api.models.claude import get_default_model
 from claude_code_api.utils.time import utc_now
 
 logger = structlog.get_logger()
+
+fcntl: Any | None
+try:
+    import fcntl as _fcntl
+except ImportError:  # pragma: no cover - non-POSIX platforms
+    fcntl = None
+else:
+    fcntl = _fcntl
 
 
 class SessionInfo:
@@ -43,6 +53,7 @@ class SessionManager:
         self.active_sessions: Dict[str, SessionInfo] = {}
         self.cli_session_index: Dict[str, str] = {}
         self.session_map_path = settings.session_map_path
+        self._persist_lock = Lock()
         self.cleanup_task: Optional[asyncio.Task] = None
         self._shutdown_event = asyncio.Event()
         self._start_cleanup_task()
@@ -93,14 +104,38 @@ class SessionManager:
         if not self.session_map_path:
             return
         try:
-            directory = os.path.dirname(self.session_map_path)
-            if directory:
-                os.makedirs(directory, exist_ok=True)
-            tmp_path = f"{self.session_map_path}.tmp"
+            directory = os.path.dirname(self.session_map_path) or os.getcwd()
+            os.makedirs(directory, exist_ok=True)
             payload = {"cli_to_api": self.cli_session_index}
-            with open(tmp_path, "w", encoding="utf-8") as handle:
-                json.dump(payload, handle, indent=2, sort_keys=True)
-            os.replace(tmp_path, self.session_map_path)
+            lock_handle = None
+
+            with self._persist_lock:
+                try:
+                    if fcntl:
+                        lock_path = f"{self.session_map_path}.lock"
+                        lock_handle = open(lock_path, "a+", encoding="utf-8")
+                        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX)
+
+                    tmp_path = None
+                    fd, tmp_path = tempfile.mkstemp(
+                        prefix="session_map_",
+                        suffix=".tmp",
+                        dir=directory,
+                    )
+
+                    try:
+                        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                            json.dump(payload, handle, indent=2, sort_keys=True)
+                            handle.flush()
+                            os.fsync(handle.fileno())
+                        os.replace(tmp_path, self.session_map_path)
+                    finally:
+                        if tmp_path and os.path.exists(tmp_path):
+                            os.remove(tmp_path)
+                finally:
+                    if lock_handle and fcntl:
+                        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
+                        lock_handle.close()
         except Exception as exc:
             logger.warning("Failed to persist session map", error=str(exc))
 

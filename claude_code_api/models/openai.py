@@ -113,7 +113,9 @@ class ChatMessage(BaseModel):
 class ChatCompletionRequest(BaseModel):
     """Chat completion request model."""
 
-    model: str = Field(..., description="ID of the model to use")
+    model: Optional[str] = Field(
+        None, description="ID of the model to use (optional; CLI default when omitted)"
+    )
     messages: List[ChatMessage] = Field(
         ..., description="List of messages comprising the conversation"
     )
