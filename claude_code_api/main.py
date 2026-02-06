@@ -225,8 +225,8 @@ if __name__ == "__main__":
 
     uvicorn.run(
         "claude_code_api.main:app",
-        host="0.0.0.0",
-        port=8000,
+        host=settings.host,
+        port=settings.port,
         reload=True,
-        log_level="info",
+        log_level=settings.log_level.lower(),
     )
