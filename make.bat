@@ -13,6 +13,8 @@ shift
 goto :collect_args
 :args_done
 
+if /I "%TARGET%"=="help" goto :help
+
 call :find_python
 if errorlevel 1 exit /b 1
 
@@ -24,7 +26,6 @@ if /I "%TARGET%"=="test" goto :test
 if /I "%TARGET%"=="test-no-cov" goto :test_no_cov
 if /I "%TARGET%"=="fmt" goto :fmt
 if /I "%TARGET%"=="lint" goto :lint
-if /I "%TARGET%"=="help" goto :help
 
 echo [ERROR] Unknown target: %TARGET%
 goto :help

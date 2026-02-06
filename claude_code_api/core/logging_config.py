@@ -74,6 +74,8 @@ def _minimal_event_filter(debug_enabled: bool, min_level_name: str | None):
         level = _METHOD_LEVELS.get(method_name.lower(), logging.INFO)
         if level >= min_level:
             return event_dict
+        if event_dict.get("lifecycle") is True:
+            return event_dict
         if event_dict.get("event") in _LIFECYCLE_EVENTS:
             return event_dict
         raise structlog.DropEvent

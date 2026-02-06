@@ -59,3 +59,4 @@ def test_configure_logging_falls_back_to_console_when_file_handler_fails(monkeyp
         for handler in original_handlers:
             root_logger.addHandler(handler)
         root_logger.setLevel(original_level)
+        structlog.reset_defaults()

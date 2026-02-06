@@ -34,21 +34,21 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Application lifespan manager."""
     # Configure logging during startup so import-time failures don't abort module load.
     configure_logging(settings)
-    logger.info("Starting Claude Code API Gateway", version="1.0.0")
+    logger.info("Starting Claude Code API Gateway", version="1.0.0", lifecycle=True)
 
     # Initialize database
     await create_tables()
-    logger.info("Database initialized")
+    logger.info("Database initialized", lifecycle=True)
 
     # Initialize managers
     app.state.session_manager = SessionManager()
     app.state.claude_manager = ClaudeManager()
-    logger.info("Managers initialized")
+    logger.info("Managers initialized", lifecycle=True)
 
     # Verify Claude Code availability
     try:
         claude_version = await app.state.claude_manager.get_version()
-        logger.info("Claude Code available", version=claude_version)
+        logger.info("Claude Code available", version=claude_version, lifecycle=True)
     except Exception as e:
         logger.error("Claude Code not available", error=str(e))
         raise HTTPException(
@@ -59,10 +59,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     yield
 
     # Cleanup
-    logger.info("Shutting down Claude Code API Gateway")
+    logger.info("Shutting down Claude Code API Gateway", lifecycle=True)
     await app.state.session_manager.cleanup_all()
     await close_database()
-    logger.info("Shutdown complete")
+    logger.info("Shutdown complete", lifecycle=True)
 
 
 app = FastAPI(
