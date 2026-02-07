@@ -30,7 +30,14 @@ jobs:
       - name: Run tests with coverage
         run: make coverage-sonar
 
+      - name: Skip SonarCloud on untrusted fork PR
+        if: ${{ github.event_name == 'pull_request' && (github.event.pull_request.head.repo.fork || !contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association)) }}
+        run: |
+          echo "Skipping SonarCloud token retrieval for untrusted PR context."
+          echo "Fork PRs and non-collaborator authors do not receive Vault-backed token access."
+
       - name: Azure login (OIDC)
+        if: ${{ github.event_name != 'pull_request' || (github.event.pull_request.head.repo.fork == false && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association)) }}
         uses: azure/login@v2
         with:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
@@ -38,6 +45,7 @@ jobs:
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
       - name: Read SonarCloud token from Key Vault
+        if: ${{ github.event_name != 'pull_request' || (github.event.pull_request.head.repo.fork == false && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association)) }}
         id: sonar_token
         shell: bash
         run: |
@@ -53,6 +61,7 @@ jobs:
           echo "value=$SONAR_TOKEN" >> "$GITHUB_OUTPUT"
 
       - name: SonarCloud scan
+        if: ${{ github.event_name != 'pull_request' || (github.event.pull_request.head.repo.fork == false && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association)) }}
         uses: SonarSource/sonarcloud-github-action@ffc3010689be73b8e5ae0c57ce35968afd7909e8
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -67,6 +76,7 @@ jobs:
             -Dsonar.enableIssueAnnotation=true
 
       - name: SonarCloud quality gate
+        if: ${{ github.event_name != 'pull_request' || (github.event.pull_request.head.repo.fork == false && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association)) }}
         uses: SonarSource/sonarqube-quality-gate-action@cf038b0e0cdecfa9e56c198bbb7d21d751d62c3b
         with:
           scanMetadataReportFile: dist/quality/sonar/scannerwork/report-task.txt
