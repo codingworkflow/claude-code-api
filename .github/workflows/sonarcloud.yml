@@ -10,13 +10,32 @@ on:
 jobs:
   sonarcloud:
     runs-on: ubuntu-latest
+    environment: org-prod
     permissions:
+      id-token: write
       contents: read
       pull-requests: write
     steps:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Read SonarCloud token from Key Vault
+        shell: bash
+        run: |
+          SONAR_TOKEN="$(az keyvault secret show \
+            --vault-name "${{ vars.AZURE_KEYVAULT_NAME }}" \
+            --name "sonar-cloud-token" \
+            --query value -o tsv)"
+          echo "::add-mask::$SONAR_TOKEN"
+          echo "SONAR_TOKEN=$SONAR_TOKEN" >> "$GITHUB_ENV"
 
       - uses: actions/setup-python@v6
         with:
@@ -32,7 +51,7 @@ jobs:
         uses: SonarSource/sonarcloud-github-action@ffc3010689be73b8e5ae0c57ce35968afd7909e8
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_TOKEN: ${{ env.SONAR_TOKEN }}
         with:
           args: >
             -Dsonar.host.url=https://sonarcloud.io
@@ -47,6 +66,6 @@ jobs:
         with:
           scanMetadataReportFile: dist/quality/sonar/scannerwork/report-task.txt
         env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_TOKEN: ${{ env.SONAR_TOKEN }}
           SONAR_HOST_URL: https://sonarcloud.io
         timeout-minutes: 5
