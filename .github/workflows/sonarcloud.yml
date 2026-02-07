@@ -38,17 +38,12 @@ jobs:
             --query value -o tsv 2>/dev/null || true)"
 
           TOKEN_SOURCE=""
-          if [ -n "${KV_SONAR_TOKEN}" ]; then
-            KV_VALID="$(curl -sS -u "${KV_SONAR_TOKEN}:" https://sonarcloud.io/api/authentication/validate | grep -Eo 'true|false' | head -n1 || true)"
-            if [ "${KV_VALID}" = "true" ]; then
-              SONAR_TOKEN="${KV_SONAR_TOKEN}"
-              TOKEN_SOURCE="keyvault"
-            fi
-          fi
-
-          if [ -z "${TOKEN_SOURCE}" ] && [ -n "${FALLBACK_SONAR_TOKEN:-}" ]; then
+          if [ -n "${FALLBACK_SONAR_TOKEN:-}" ]; then
             SONAR_TOKEN="${FALLBACK_SONAR_TOKEN}"
             TOKEN_SOURCE="github-secret-fallback"
+          elif [ -n "${KV_SONAR_TOKEN}" ]; then
+            SONAR_TOKEN="${KV_SONAR_TOKEN}"
+            TOKEN_SOURCE="keyvault"
           fi
 
           if [ -z "${TOKEN_SOURCE}" ]; then
