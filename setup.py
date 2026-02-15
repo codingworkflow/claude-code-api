@@ -24,6 +24,7 @@ setup(
         "python-multipart>=0.0.6",
         "pydantic-settings>=2.1.0",
         "sqlalchemy>=2.0.23",
+        "greenlet>=3.0.0",
         "aiosqlite>=0.19.0",
         "alembic>=1.13.0",
         "passlib[bcrypt]>=1.7.4",
