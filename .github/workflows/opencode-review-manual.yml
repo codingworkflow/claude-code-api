@@ -30,12 +30,14 @@ on:
 
 permissions:
   contents: read
-  pull-requests: write
-  issues: write
-  id-token: write
 
 jobs:
   opencode-review:
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+      id-token: write
     uses: codingworkflow/codingworkflow-security-policies/.github/workflows/reusable-opencode-review.yml@55070d1bc124fbe46d9a8edbc8d536826d4e15ed
     with:
       pr_number: ${{ inputs.pr_number }}
