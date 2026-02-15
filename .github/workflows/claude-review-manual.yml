@@ -23,8 +23,8 @@ jobs:
   claude-review:
     uses: codingworkflow/codingworkflow-security-policies/.github/workflows/reusable-claude-review.yml@55070d1bc124fbe46d9a8edbc8d536826d4e15ed
     with:
-      pr_number: ${{ inputs.pr_number }}
-      force_review: ${{ inputs.force_review }}
+      pr_number: ${{ fromJSON(format('{0}', inputs.pr_number)) }}
+      force_review: ${{ fromJSON(format('{0}', inputs.force_review)) }}
       allowed_actors: ${{ vars.ALLOWED_ACTORS }}
       azure_client_id: ${{ vars.AZURE_CLIENT_ID }}
       azure_tenant_id: ${{ vars.AZURE_TENANT_ID }}
