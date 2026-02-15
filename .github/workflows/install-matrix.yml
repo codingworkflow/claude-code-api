@@ -115,7 +115,7 @@ jobs:
 
   live-claude-haiku:
     name: Live Claude + Haiku validation (manual)
-    if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.run_live_claude == 'true' && secrets.ANTHROPIC_API_KEY != '' }}
+    if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.run_live_claude == 'true' }}
     runs-on: ubuntu-latest
     needs: api-smoke
     continue-on-error: true
@@ -139,6 +139,15 @@ jobs:
 
       - name: Add Claude CLI path
         run: echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Verify ANTHROPIC_API_KEY is configured
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
+            echo "ANTHROPIC_API_KEY secret is required for live Claude validation."
+            exit 1
+          fi
 
       - name: Configure Claude auth from API key
         env:
