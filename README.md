@@ -93,6 +93,12 @@ Common settings are in `claude_code_api/core/config.py`:
 - `database_url`
 - `require_auth`
 
+## Bug Reports & Support
+
+For `claude-code-api` and `ai-code-fusion`, use this discussion thread for bug reports and troubleshooting:
+
+- https://github.com/codingworkflow/ai-code-fusion/discussions/151
+
 ## Developer Docs
 
 For engineering workflows and internal commands:
