@@ -15,14 +15,12 @@ on:
 
 permissions:
   contents: read
+  pull-requests: write # zizmor: ignore[excessive-permissions] required for reusable review workflow
+  issues: write # zizmor: ignore[excessive-permissions] required for reusable review workflow
+  id-token: write # zizmor: ignore[excessive-permissions] required for Azure OIDC login
 
 jobs:
   claude-review:
-    permissions:
-      contents: read
-      pull-requests: write
-      issues: write
-      id-token: write
     uses: codingworkflow/codingworkflow-security-policies/.github/workflows/reusable-claude-review.yml@55070d1bc124fbe46d9a8edbc8d536826d4e15ed
     with:
       pr_number: ${{ inputs.pr_number }}
