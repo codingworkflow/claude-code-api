@@ -1,0 +1,50 @@
+name: OpenCode Manual PR Review
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Pull request number to review
+        required: true
+        type: number
+      model:
+        description: Single OpenCode model in provider/model format (used when models is empty)
+        required: false
+        default: zai-coding-plan/glm-4.7
+        type: string
+      models:
+        description: Optional comma or newline separated model list (overrides model)
+        required: false
+        default: ""
+        type: string
+      max_parallel:
+        description: Maximum parallel model reviews
+        required: true
+        default: 1
+        type: number
+      force_review:
+        description: Run review even when the PR is below default size thresholds
+        required: false
+        default: false
+        type: boolean
+
+permissions: {}
+
+jobs:
+  opencode-review:
+    uses: codingworkflow/codingworkflow-security-policies/.github/workflows/reusable-opencode-review.yml@main
+    secrets: inherit
+    with:
+      pr_number: ${{ inputs.pr_number }}
+      force_review: ${{ inputs.force_review }}
+      model: ${{ inputs.model }}
+      models: ${{ inputs.models }}
+      max_parallel: ${{ inputs.max_parallel }}
+      allowed_actors: ${{ vars.ALLOWED_ACTORS }}
+      azure_client_id: ${{ vars.AZURE_CLIENT_ID }}
+      azure_tenant_id: ${{ vars.AZURE_TENANT_ID }}
+      azure_subscription_id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      azure_key_vault_name: ${{ vars.AZURE_KEYVAULT_NAME || vars.AZURE_KEY_VAULT_NAME }}
+      zhipu_secret_name: ${{ vars.OPENCODE_ZHIPU_API_KEY_SECRET_NAME || 'zhipu-api-key' }}
+      min_changed_files: 5
+      min_total_changes: 20

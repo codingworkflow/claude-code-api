@@ -1,0 +1,32 @@
+name: Claude Manual PR Review
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Pull request number to review
+        required: true
+        type: number
+      force_review:
+        description: Run review even when the PR is below default size thresholds
+        required: false
+        default: false
+        type: boolean
+
+permissions: {}
+
+jobs:
+  claude-review:
+    uses: codingworkflow/codingworkflow-security-policies/.github/workflows/reusable-claude-review.yml@main
+    secrets: inherit
+    with:
+      pr_number: ${{ inputs.pr_number }}
+      force_review: ${{ inputs.force_review }}
+      allowed_actors: ${{ vars.ALLOWED_ACTORS }}
+      azure_client_id: ${{ vars.AZURE_CLIENT_ID }}
+      azure_tenant_id: ${{ vars.AZURE_TENANT_ID }}
+      azure_subscription_id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      azure_key_vault_name: ${{ vars.AZURE_KEYVAULT_NAME || vars.AZURE_KEY_VAULT_NAME }}
+      claude_secret_name: ${{ vars.CLAUDE_TOKEN_SECRET_NAME || 'token-cicd' }}
+      min_changed_files: 5
+      min_total_changes: 20
