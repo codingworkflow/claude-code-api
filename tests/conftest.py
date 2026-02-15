@@ -3,6 +3,7 @@
 import json
 import os
 import shutil
+import sys
 import tempfile
 from pathlib import Path
 
@@ -17,6 +18,91 @@ from claude_code_api.main import app
 from tests.model_utils import get_test_model_id
 
 PROJECT_ROOT = Path(__file__).parent.parent
+
+
+def _serialize_fixture_rules(fixture_rules, fixtures_dir: Path):
+    serialized_rules = []
+    for rule in fixture_rules:
+        matches = [str(match).lower() for match in rule.get("match", []) if match]
+        fixture_file = rule.get("file")
+        if not fixture_file or not matches:
+            continue
+        serialized_rules.append(
+            {
+                "matches": matches,
+                "fixture_path": str(fixtures_dir / fixture_file),
+            }
+        )
+    return serialized_rules
+
+
+def _create_mock_claude_binary(
+    temp_dir: str,
+    default_fixture: Path,
+    fixture_rules,
+    fixtures_dir: Path,
+) -> str:
+    """Create a mock Claude CLI launcher that works on POSIX and Windows."""
+    serialized_rules = _serialize_fixture_rules(fixture_rules, fixtures_dir)
+    runner_path = Path(temp_dir) / "claude_mock.py"
+    runner_code = "\n".join(
+        [
+            "#!/usr/bin/env python3",
+            "import sys",
+            "",
+            f"DEFAULT_FIXTURE = {str(default_fixture)!r}",
+            f"FIXTURE_RULES = {serialized_rules!r}",
+            "",
+            "def _extract_prompt(args):",
+            "    for idx, value in enumerate(args):",
+            "        if value == '-p' and idx + 1 < len(args):",
+            "            return args[idx + 1]",
+            "    return ''",
+            "",
+            "def _resolve_fixture(prompt):",
+            "    prompt_lower = prompt.lower()",
+            "    fixture_path = DEFAULT_FIXTURE",
+            "    for rule in FIXTURE_RULES:",
+            "        if any(match in prompt_lower for match in rule['matches']):",
+            "            fixture_path = rule['fixture_path']",
+            "    return fixture_path",
+            "",
+            "def main():",
+            "    args = sys.argv[1:]",
+            "    if args and args[0] == '--version':",
+            "        print('Claude Code 1.0.0')",
+            "        return 0",
+            "    prompt = _extract_prompt(args)",
+            "    fixture_path = _resolve_fixture(prompt)",
+            "    with open(fixture_path, 'r', encoding='utf-8') as handle:",
+            "        sys.stdout.write(handle.read())",
+            "    return 0",
+            "",
+            "if __name__ == '__main__':",
+            "    raise SystemExit(main())",
+            "",
+        ]
+    )
+    runner_path.write_text(runner_code, encoding="utf-8")
+    os.chmod(runner_path, 0o755)
+
+    if os.name == "nt":
+        launcher_path = Path(temp_dir) / "claude.cmd"
+        launcher_code = f'@echo off\r\n"{sys.executable}" "{runner_path}" %*\r\n'
+        launcher_path.write_text(launcher_code, encoding="utf-8")
+        return str(launcher_path)
+
+    launcher_path = Path(temp_dir) / "claude"
+    launcher_code = "\n".join(
+        [
+            "#!/usr/bin/env sh",
+            f'exec "{sys.executable}" "{runner_path}" "$@"',
+            "",
+        ]
+    )
+    launcher_path.write_text(launcher_code, encoding="utf-8")
+    os.chmod(launcher_path, 0o755)
+    return str(launcher_path)
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -55,43 +141,12 @@ def setup_test_environment():
             except Exception as exc:
                 raise RuntimeError(f"Failed to parse fixture index: {exc}") from exc
 
-        # Create a mock binary that replays recorded JSONL fixtures
-        mock_path = os.path.join(temp_dir, "claude")
-        with open(mock_path, "w") as f:
-            f.write("#!/usr/bin/env bash\n")
-            f.write(
-                'if [ "$1" == "--version" ]; then echo "Claude Code 1.0.0"; exit 0; fi\n'
-            )
-            f.write('prompt=""\n')
-            f.write('args=("$@")\n')
-            f.write("for ((i=0; i<${#args[@]}; i++)); do\n")
-            f.write('  if [ "${args[$i]}" == "-p" ]; then\n')
-            f.write('    prompt="${args[$((i+1))]}"\n')
-            f.write("    break\n")
-            f.write("  fi\n")
-            f.write("done\n")
-            f.write(
-                'prompt_lower="$(printf "%s" "$prompt" | tr "[:upper:]" "[:lower:]")"\n'
-            )
-            f.write(f'fixture_default="{default_fixture}"\n')
-            f.write('fixture_match="$fixture_default"\n')
-            for rule in fixture_rules:
-                matches = rule.get("match", [])
-                fixture_file = rule.get("file")
-                if not fixture_file or not matches:
-                    continue
-                fixture_path = fixtures_dir / fixture_file
-                for match in matches:
-                    match_escaped = str(match).replace('"', '\\"')
-                    line = (
-                        f'if echo "$prompt_lower" | grep -q "{match_escaped}"; '
-                        f'then fixture_match="{fixture_path}"; '
-                        "fi\n"
-                    )
-                    f.write(line)
-            f.write('cat "$fixture_match"\n')
-        os.chmod(mock_path, 0o755)
-        settings.claude_binary_path = mock_path
+        settings.claude_binary_path = _create_mock_claude_binary(
+            temp_dir=temp_dir,
+            default_fixture=default_fixture,
+            fixture_rules=fixture_rules,
+            fixtures_dir=fixtures_dir,
+        )
     else:
         # Ensure the real binary is available when requested
         if not shutil.which(settings.claude_binary_path) and not os.path.exists(

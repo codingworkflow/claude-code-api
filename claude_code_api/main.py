@@ -132,11 +132,7 @@ async def http_exception_handler(request, exc):
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request, exc):
     """Return OpenAI-style errors for validation failures."""
-    status_code = getattr(
-        status,
-        "HTTP_422_UNPROCESSABLE_CONTENT",
-        status.HTTP_422_UNPROCESSABLE_ENTITY,
-    )
+    status_code = getattr(status, "HTTP_422_UNPROCESSABLE_CONTENT", 422)
     for error in exc.errors():
         if error.get("type") in {"value_error.jsondecode", "json_invalid"}:
             status_code = status.HTTP_400_BAD_REQUEST

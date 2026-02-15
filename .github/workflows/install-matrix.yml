@@ -1,0 +1,208 @@
+name: Install Matrix + API Smoke
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      run_live_claude:
+        description: Run optional live Claude + Haiku validation
+        required: false
+        type: boolean
+        default: false
+      live_model:
+        description: Model ID for optional live validation
+        required: false
+        type: string
+        default: claude-haiku-4-5-20251001
+
+permissions:
+  contents: read
+
+jobs:
+  install-check:
+    name: Install ${{ matrix.install_mode }} | ${{ matrix.os }} | py${{ matrix.python-version }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
+        python-version:
+          - '3.11'
+          - '3.12'
+        install_mode:
+          - pep517
+          - fallback
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Upgrade packaging tools
+        run: python -m pip install --upgrade pip setuptools wheel
+
+      - name: Install package with PEP 517 editable mode
+        if: ${{ matrix.install_mode == 'pep517' }}
+        run: python -m pip install -e . --use-pep517
+
+      - name: Install package with editable fallback mode
+        if: ${{ matrix.install_mode == 'fallback' }}
+        run: python -m pip install -e .
+
+      - name: Validate dependency graph
+        run: python -m pip check
+
+      - name: Validate runtime imports
+        run: python -c "import claude_code_api, greenlet, sqlalchemy; print('install-import-smoke-ok')"
+
+  api-smoke:
+    name: API smoke | ${{ matrix.os }} | py${{ matrix.python-version }}
+    runs-on: ${{ matrix.os }}
+    needs: install-check
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
+        python-version:
+          - '3.11'
+          - '3.12'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Upgrade packaging tools
+        run: python -m pip install --upgrade pip setuptools wheel
+
+      - name: Install project with test extras
+        run: python -m pip install -e ".[test]" --use-pep517
+
+      - name: Run deterministic tests (excluding live e2e)
+        run: python -m pytest -q -m "not e2e"
+
+      - name: Run API health smoke test
+        run: python -m pytest -q tests/test_end_to_end.py::TestHealthAndBasics::test_health_check
+
+      - name: Run API models smoke test
+        run: python -m pytest -q tests/test_end_to_end.py::TestModelsAPI::test_list_models
+
+      - name: Upload test artifacts on failure
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: api-smoke-artifacts-${{ matrix.os }}-py${{ matrix.python-version }}
+          path: |
+            .pytest_cache
+            dist/tests
+          if-no-files-found: ignore
+          retention-days: 14
+
+  live-claude-haiku:
+    name: Live Claude + Haiku validation (manual)
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_live_claude && secrets.ANTHROPIC_API_KEY != '' }}
+    runs-on: ubuntu-latest
+    needs: api-smoke
+    continue-on-error: true
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
+        with:
+          python-version: '3.12'
+
+      - name: Upgrade packaging tools
+        run: python -m pip install --upgrade pip setuptools wheel
+
+      - name: Install project with test extras
+        run: python -m pip install -e ".[test]" --use-pep517
+
+      - name: Install Claude CLI
+        run: curl -fsSL https://claude.ai/install.sh | bash
+
+      - name: Add Claude CLI path
+        run: echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Configure Claude auth from API key
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          config_dir = Path.home() / ".config" / "claude"
+          config_dir.mkdir(parents=True, exist_ok=True)
+          config = {"apiKey": os.environ["ANTHROPIC_API_KEY"], "autoUpdate": False}
+          with (config_dir / "config.json").open("w", encoding="utf-8") as handle:
+              json.dump(config, handle)
+          PY
+
+      - name: Start API server
+        run: |
+          nohup python -m claude_code_api.main > api-server.log 2>&1 &
+          echo "$!" > api-server.pid
+
+      - name: Wait for health endpoint
+        run: |
+          python - <<'PY'
+          import time
+          import urllib.error
+          import urllib.request
+
+          url = "http://127.0.0.1:8000/health"
+          deadline = time.time() + 60
+          while time.time() < deadline:
+              try:
+                  with urllib.request.urlopen(url, timeout=5) as response:
+                      if response.status == 200:
+                          raise SystemExit(0)
+              except urllib.error.URLError:
+                  pass
+              time.sleep(2)
+
+          raise SystemExit("API health check failed after 60 seconds")
+          PY
+
+      - name: Run live E2E against Haiku
+        env:
+          CLAUDE_CODE_API_E2E: '1'
+          CLAUDE_CODE_API_BASE_URL: http://127.0.0.1:8000
+          CLAUDE_CODE_API_TEST_MODEL: ${{ inputs.live_model }}
+        run: python -m pytest -q tests/test_e2e_live_api.py -m e2e -v
+
+      - name: Stop API server
+        if: ${{ always() }}
+        run: |
+          if [ -f api-server.pid ]; then
+            kill "$(cat api-server.pid)" || true
+          fi
+
+      - name: Upload live validation logs
+        if: ${{ always() }}
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: live-claude-haiku-logs
+          path: |
+            api-server.log
+            dist/tests
+          if-no-files-found: ignore
+          retention-days: 14

@@ -80,6 +80,23 @@ Coverage-only artifacts for Sonar:
 make coverage-sonar
 ```
 
+## CI Matrix Testing
+
+- Cross-platform install and API smoke checks run in `.github/workflows/install-matrix.yml`.
+- Matrix coverage includes:
+  - OS: `ubuntu-latest`, `macos-latest`, `windows-latest`
+  - Python: `3.11`, `3.12`
+  - Install modes: explicit PEP 517 editable and editable fallback path (`pip install -e .`)
+- The workflow runs deterministic tests with `pytest -m "not e2e"` and targeted API smoke checks for `/health` and `/v1/models`.
+
+Optional live validation (manual only):
+
+- Trigger `Install Matrix + API Smoke` via `workflow_dispatch`.
+- Set `run_live_claude=true`.
+- Provide repository secret `ANTHROPIC_API_KEY`.
+- Optional input `live_model` defaults to `claude-haiku-4-5-20251001`.
+- The live job is non-blocking (`continue-on-error`) while reliability is being established.
+
 ## Logging
 
 - Logging is configured centrally in `claude_code_api/core/logging_config.py`.
