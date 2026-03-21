@@ -20,6 +20,7 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
         with:
@@ -48,11 +49,13 @@ jobs:
       - name: Read SonarCloud token from Key Vault
         if: ${{ github.event_name != 'pull_request' || (github.event.pull_request.head.repo.fork == false && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association)) }}
         id: sonar_token
+        env:
+          AZURE_KEYVAULT_NAME: ${{ vars.AZURE_KEYVAULT_NAME }}
         shell: bash
         run: |
           set -euo pipefail
           SONAR_TOKEN="$(az keyvault secret show \
-            --vault-name "${{ vars.AZURE_KEYVAULT_NAME }}" \
+            --vault-name "$AZURE_KEYVAULT_NAME" \
             --name "sonar-cloud-token" \
             --query value -o tsv)"
           if [ -z "${SONAR_TOKEN}" ]; then
