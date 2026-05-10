@@ -14,17 +14,28 @@ def clear_models_cache():
     claude_models._load_models_config.cache_clear()
 
 
-def test_opus_46_is_available():
+def test_latest_opus_and_sonnet_are_available():
     available_models = {model.id for model in claude_models.get_available_models()}
+    assert "claude-opus-4-7" in available_models
     assert "claude-opus-4-6-20260205" in available_models
+    assert "claude-sonnet-4-6" in available_models
 
 
-def test_opus_alias_resolves_to_canonical_model():
+def test_model_aliases_resolve_to_current_models():
+    assert claude_models.validate_claude_model("claude-opus-4-7") == "claude-opus-4-7"
+    assert claude_models.validate_claude_model("opus") == "claude-opus-4-7"
+    assert claude_models.validate_claude_model("sonnet") == "claude-sonnet-4-6"
+    assert (
+        claude_models.validate_claude_model("claude-sonnet-latest")
+        == "claude-sonnet-4-6"
+    )
+
+
+def test_opus_46_alias_resolves_to_canonical_model():
     assert (
         claude_models.validate_claude_model("claude-opus-4-6")
         == "claude-opus-4-6-20260205"
     )
-    assert claude_models.validate_claude_model("opus") == "claude-opus-4-6-20260205"
 
 
 def test_opus_45_falls_forward_to_latest_opus_when_missing(tmp_path, monkeypatch):

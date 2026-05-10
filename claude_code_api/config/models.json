@@ -1,15 +1,34 @@
 {
-  "default_model": "claude-sonnet-4-5-20250929",
+  "default_model": "claude-sonnet-4-6",
   "aliases": {
-    "opus": "claude-opus-4-6-20260205",
-    "sonnet": "claude-sonnet-4-5-20250929",
+    "opus": "claude-opus-4-7",
+    "sonnet": "claude-sonnet-4-6",
     "haiku": "claude-haiku-4-5-20251001",
-    "claude-opus-latest": "claude-opus-4-6-20260205",
+
+    "claude-opus-latest": "claude-opus-4-7",
+    "claude-opus-4-7": "claude-opus-4-7",
     "claude-opus-4-6": "claude-opus-4-6-20260205",
     "claude-opus-4-5": "claude-opus-4-5-20251101",
-    "claude-opus-4-5-latest": "claude-opus-4-5-20251101"
+    "claude-opus-4-5-latest": "claude-opus-4-5-20251101",
+
+    "claude-sonnet-latest": "claude-sonnet-4-6",
+    "claude-sonnet-4-6": "claude-sonnet-4-6",
+    "claude-sonnet-4-5": "claude-sonnet-4-5-20250929",
+
+    "claude-haiku-latest": "claude-haiku-4-5-20251001",
+    "claude-haiku-4-5": "claude-haiku-4-5-20251001"
   },
   "models": [
+    {
+      "id": "claude-opus-4-7",
+      "name": "Claude Opus 4.7",
+      "description": "Most capable generally available Claude model for complex reasoning and agentic coding",
+      "max_tokens": 131072,
+      "input_cost_per_1k": 0.005,
+      "output_cost_per_1k": 0.025,
+      "supports_streaming": true,
+      "supports_tools": true
+    },
     {
       "id": "claude-opus-4-6-20260205",
       "name": "Claude Opus 4.6",
@@ -27,6 +46,16 @@
       "max_tokens": 65536,
       "input_cost_per_1k": 0.005,
       "output_cost_per_1k": 0.025,
+      "supports_streaming": true,
+      "supports_tools": true
+    },
+    {
+      "id": "claude-sonnet-4-6",
+      "name": "Claude Sonnet 4.6",
+      "description": "Best combination of speed and intelligence",
+      "max_tokens": 65536,
+      "input_cost_per_1k": 0.003,
+      "output_cost_per_1k": 0.015,
       "supports_streaming": true,
       "supports_tools": true
     },
