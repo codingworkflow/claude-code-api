@@ -200,6 +200,7 @@ async def root():
         "description": "OpenAI-compatible API for Claude Code",
         "endpoints": {
             "chat": "/v1/chat/completions",
+            "responses": "/v1/responses",
             "models": "/v1/models",
             "projects": "/v1/projects",
             "sessions": "/v1/sessions",

@@ -2,7 +2,8 @@
 
 import hashlib
 import json
-from typing import Any, Dict, Optional, Tuple
+import uuid
+from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple
 
 import structlog
 from fastapi import APIRouter, HTTPException, Request, status
@@ -20,6 +21,8 @@ from claude_code_api.models.openai import (
     ChatCompletionRequest,
     ChatCompletionResponse,
     ErrorResponse,
+    ResponsesCreateRequest,
+    ResponsesResponse,
 )
 from claude_code_api.utils.parser import (
     ClaudeOutputParser,
@@ -31,6 +34,7 @@ from claude_code_api.utils.streaming import (
     create_non_streaming_response,
     create_sse_response,
 )
+from claude_code_api.utils.time import utc_timestamp
 
 logger = structlog.get_logger()
 router = APIRouter()
@@ -53,6 +57,23 @@ CHAT_COMPLETION_RESPONSES = {
     500: {"model": ErrorResponse},
 }
 
+RESPONSES_API_RESPONSES = {
+    200: {
+        "model": ResponsesResponse,
+        "description": "Responses API response (JSON when stream=false, SSE when stream=true).",
+        "content": {
+            "text/event-stream": {"schema": {"type": "string"}},
+        },
+    },
+    400: {"model": ErrorResponse},
+    422: {"model": ErrorResponse},
+    503: {"model": ErrorResponse},
+    500: {"model": ErrorResponse},
+}
+
+RESPONSE_TEXT_BLOCK_TYPES = {"input_text", "output_text", "text"}
+RESPONSE_INPUT_ROLES = {"system", "user", "assistant", "tool"}
+
 
 def _http_error(
     status_code: int, message: str, error_type: str, code: str
@@ -60,6 +81,15 @@ def _http_error(
     return HTTPException(
         status_code=status_code,
         detail={"error": {"message": message, "type": error_type, "code": code}},
+    )
+
+
+def _input_error(message: str, code: str = "invalid_input") -> HTTPException:
+    return _http_error(
+        status.HTTP_400_BAD_REQUEST,
+        message,
+        "invalid_request_error",
+        code,
     )
 
 
@@ -114,6 +144,470 @@ def _extract_prompts(request: ChatCompletionRequest) -> Tuple[str, str]:
         else request.system_prompt
     )
     return user_prompt, system_prompt
+
+
+def _coerce_response_content_block(block: Any, location: str) -> str:
+    if isinstance(block, str):
+        return block
+
+    if not isinstance(block, dict):
+        raise _input_error(
+            f"Unsupported content block at {location}: expected an object or string.",
+            "unsupported_input_block",
+        )
+
+    block_type = block.get("type")
+    if block_type in RESPONSE_TEXT_BLOCK_TYPES:
+        if "text" not in block:
+            raise _input_error(
+                f"Text content block at {location} is missing the 'text' field.",
+                "invalid_input_block",
+            )
+        return str(block["text"])
+
+    if block_type is None:
+        if "text" in block:
+            return str(block["text"])
+        if "content" in block:
+            return str(block["content"])
+
+    raise _input_error(
+        f"Unsupported content block type at {location}: {block_type!r}.",
+        "unsupported_input_block",
+    )
+
+
+def _coerce_response_content(content: Any, location: str) -> str:
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        text_parts = [
+            _coerce_response_content_block(block, f"{location}.content[{index}]")
+            for index, block in enumerate(content)
+        ]
+        return "\n".join(part for part in text_parts if part)
+    if isinstance(content, dict):
+        return _coerce_response_content_block(content, f"{location}.content")
+
+    raise _input_error(
+        f"Unsupported content at {location}: expected a string or content block array.",
+        "unsupported_input_content",
+    )
+
+
+def _coerce_response_role(role: Any, location: str) -> str:
+    if not isinstance(role, str) or not role:
+        raise _input_error(
+            f"Message at {location} is missing a valid 'role'.",
+            "invalid_input_message",
+        )
+
+    if role == "developer":
+        return "system"
+
+    if role not in RESPONSE_INPUT_ROLES:
+        raise _input_error(
+            f"Unsupported message role at {location}: {role!r}.",
+            "unsupported_input_role",
+        )
+
+    return role
+
+
+def _responses_input_to_chat_messages(input_value: Any) -> List[Dict[str, Any]]:
+    if isinstance(input_value, str):
+        return [{"role": "user", "content": input_value}]
+
+    if not isinstance(input_value, list):
+        raise _input_error(
+            "The 'input' field must be a string or an array of message objects.",
+            "invalid_input",
+        )
+
+    messages: List[Dict[str, Any]] = []
+    for index, item in enumerate(input_value):
+        location = f"input[{index}]"
+        if not isinstance(item, dict):
+            raise _input_error(
+                f"Message at {location} must be an object.",
+                "invalid_input_message",
+            )
+
+        item_type = item.get("type")
+        if item_type not in (None, "message"):
+            raise _input_error(
+                f"Unsupported input item type at {location}: {item_type!r}.",
+                "unsupported_input_item",
+            )
+
+        role = _coerce_response_role(item.get("role"), location)
+        content = _coerce_response_content(item.get("content"), location)
+        message: Dict[str, Any] = {"role": role, "content": content}
+
+        for optional_field in ("name", "tool_call_id", "tool_calls"):
+            if optional_field in item:
+                message[optional_field] = item[optional_field]
+
+        messages.append(message)
+
+    return messages
+
+
+def _responses_request_to_chat_request(
+    request: ResponsesCreateRequest, stream: bool = False
+) -> ChatCompletionRequest:
+    messages = _responses_input_to_chat_messages(request.input)
+    system_prompt = request.instructions if request.instructions else None
+
+    return ChatCompletionRequest(
+        model=request.model,
+        messages=messages,
+        temperature=request.temperature,
+        max_tokens=request.max_output_tokens,
+        stream=stream,
+        project_id=request.project_id,
+        session_id=request.session_id,
+        system_prompt=system_prompt,
+    )
+
+
+def _extract_chat_response_text(chat_response: Dict[str, Any]) -> str:
+    choices = chat_response.get("choices") or []
+    if not choices or not isinstance(choices[0], dict):
+        return ""
+
+    message = choices[0].get("message") or {}
+    if not isinstance(message, dict):
+        return ""
+
+    content = message.get("content")
+    if isinstance(content, str):
+        return content
+    if content is None:
+        return ""
+    return str(content)
+
+
+def _responses_usage_from_chat(chat_response: Dict[str, Any]) -> Dict[str, Any]:
+    usage = chat_response.get("usage") or {}
+    if not isinstance(usage, dict):
+        usage = {}
+
+    return {
+        "input_tokens": usage.get("prompt_tokens"),
+        "output_tokens": usage.get("completion_tokens"),
+        "total_tokens": usage.get("total_tokens"),
+    }
+
+
+def _chat_response_to_responses_response(
+    request: ResponsesCreateRequest, chat_response: Dict[str, Any]
+) -> Dict[str, Any]:
+    created_at = chat_response.get("created") or utc_timestamp()
+    completed_at = utc_timestamp()
+    output_text = _extract_chat_response_text(chat_response)
+
+    return {
+        "id": f"resp_{uuid.uuid4().hex}",
+        "object": "response",
+        "created_at": created_at,
+        "status": "completed",
+        "completed_at": completed_at,
+        "error": None,
+        "incomplete_details": None,
+        "instructions": None,
+        "max_output_tokens": request.max_output_tokens,
+        "model": chat_response.get("model") or request.model,
+        "output": [
+            {
+                "id": f"msg_{uuid.uuid4().hex}",
+                "type": "message",
+                "status": "completed",
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "output_text",
+                        "text": output_text,
+                        "annotations": [],
+                    }
+                ],
+            }
+        ],
+        "output_text": output_text,
+        "usage": _responses_usage_from_chat(chat_response),
+    }
+
+
+def _responses_stream_event(event_type: str, data: Dict[str, Any]) -> str:
+    payload = {"type": event_type, **data}
+    json_data = json.dumps(payload, separators=(",", ":"))
+    return f"event: {event_type}\ndata: {json_data}\n\n"
+
+
+def _responses_stream_error(message: str) -> str:
+    return _responses_stream_event(
+        "response.failed",
+        {
+            "response": {
+                "id": f"resp_{uuid.uuid4().hex}",
+                "object": "response",
+                "created_at": utc_timestamp(),
+                "status": "failed",
+                "error": {
+                    "message": message,
+                    "type": "server_error",
+                    "code": "stream_error",
+                },
+            }
+        },
+    )
+
+
+async def _iter_sse_events(body_iterator: Any) -> AsyncGenerator[str, None]:
+    buffer = ""
+    async for chunk in body_iterator:
+        if isinstance(chunk, bytes):
+            buffer += chunk.decode("utf-8")
+        else:
+            buffer += str(chunk)
+
+        while "\n\n" in buffer:
+            raw_event, buffer = buffer.split("\n\n", 1)
+            if raw_event.strip():
+                yield raw_event
+
+    if buffer.strip():
+        yield buffer
+
+
+def _sse_data(raw_event: str) -> Optional[str]:
+    data_lines = []
+    for line in raw_event.splitlines():
+        if line.startswith("data:"):
+            data_lines.append(line[5:].lstrip())
+    if not data_lines:
+        return None
+    return "\n".join(data_lines)
+
+
+def _responses_completed_payload(
+    response_id: str,
+    message_id: str,
+    created_at: int,
+    completed_at: int,
+    request: ResponsesCreateRequest,
+    model: str,
+    output_text: str,
+) -> Dict[str, Any]:
+    return {
+        "id": response_id,
+        "object": "response",
+        "created_at": created_at,
+        "status": "completed",
+        "completed_at": completed_at,
+        "error": None,
+        "incomplete_details": None,
+        "instructions": None,
+        "max_output_tokens": request.max_output_tokens,
+        "model": model,
+        "output": [
+            {
+                "id": message_id,
+                "type": "message",
+                "status": "completed",
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "output_text",
+                        "text": output_text,
+                        "annotations": [],
+                    }
+                ],
+            }
+        ],
+        "output_text": output_text,
+        "usage": {
+            "input_tokens": None,
+            "output_tokens": None,
+            "total_tokens": None,
+        },
+    }
+
+
+async def _create_responses_sse_from_chat_stream(
+    chat_stream_response: StreamingResponse,
+    request: ResponsesCreateRequest,
+) -> AsyncGenerator[str, None]:
+    response_id = f"resp_{uuid.uuid4().hex}"
+    message_id = f"msg_{uuid.uuid4().hex}"
+    created_at = utc_timestamp()
+    model = request.model
+    output_parts: List[str] = []
+    content_started = False
+
+    yield _responses_stream_event(
+        "response.created",
+        {
+            "response": {
+                "id": response_id,
+                "object": "response",
+                "created_at": created_at,
+                "status": "in_progress",
+                "model": model,
+            }
+        },
+    )
+    yield _responses_stream_event(
+        "response.output_item.added",
+        {
+            "output_index": 0,
+            "item": {
+                "id": message_id,
+                "type": "message",
+                "status": "in_progress",
+                "role": "assistant",
+                "content": [],
+            },
+        },
+    )
+
+    try:
+        async for raw_event in _iter_sse_events(chat_stream_response.body_iterator):
+            payload = _sse_data(raw_event)
+            if payload is None:
+                continue
+            if payload == "[DONE]":
+                break
+
+            try:
+                chunk = json.loads(payload)
+            except json.JSONDecodeError:
+                continue
+
+            if "error" in chunk:
+                yield _responses_stream_event(
+                    "response.failed", {"response": {"id": response_id, **chunk}}
+                )
+                return
+
+            model = chunk.get("model") or model
+            choices = chunk.get("choices") or []
+            if not choices:
+                continue
+
+            choice = choices[0]
+            delta = choice.get("delta") or {}
+            text_delta = delta.get("content")
+            if not text_delta:
+                continue
+
+            if not content_started:
+                content_started = True
+                yield _responses_stream_event(
+                    "response.content_part.added",
+                    {
+                        "item_id": message_id,
+                        "output_index": 0,
+                        "content_index": 0,
+                        "part": {
+                            "type": "output_text",
+                            "text": "",
+                            "annotations": [],
+                        },
+                    },
+                )
+
+            output_parts.append(str(text_delta))
+            yield _responses_stream_event(
+                "response.output_text.delta",
+                {
+                    "item_id": message_id,
+                    "output_index": 0,
+                    "content_index": 0,
+                    "delta": str(text_delta),
+                },
+            )
+
+        output_text = "".join(output_parts)
+        if not content_started:
+            yield _responses_stream_event(
+                "response.content_part.added",
+                {
+                    "item_id": message_id,
+                    "output_index": 0,
+                    "content_index": 0,
+                    "part": {
+                        "type": "output_text",
+                        "text": "",
+                        "annotations": [],
+                    },
+                },
+            )
+
+        yield _responses_stream_event(
+            "response.output_text.done",
+            {
+                "item_id": message_id,
+                "output_index": 0,
+                "content_index": 0,
+                "text": output_text,
+            },
+        )
+        yield _responses_stream_event(
+            "response.content_part.done",
+            {
+                "item_id": message_id,
+                "output_index": 0,
+                "content_index": 0,
+                "part": {
+                    "type": "output_text",
+                    "text": output_text,
+                    "annotations": [],
+                },
+            },
+        )
+        yield _responses_stream_event(
+            "response.output_item.done",
+            {
+                "output_index": 0,
+                "item": {
+                    "id": message_id,
+                    "type": "message",
+                    "status": "completed",
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "output_text",
+                            "text": output_text,
+                            "annotations": [],
+                        }
+                    ],
+                },
+            },
+        )
+
+        completed_at = utc_timestamp()
+        yield _responses_stream_event(
+            "response.completed",
+            {
+                "response": _responses_completed_payload(
+                    response_id=response_id,
+                    message_id=message_id,
+                    created_at=created_at,
+                    completed_at=completed_at,
+                    request=request,
+                    model=model,
+                    output_text=output_text,
+                )
+            },
+        )
+        yield "data: [DONE]\n\n"
+
+    except Exception as e:
+        logger.error("Responses streaming error", error=str(e), exc_info=True)
+        yield _responses_stream_error("Stream error")
 
 
 async def _resolve_session(
@@ -253,6 +747,58 @@ def _log_response_payload(response: Dict[str, Any]) -> None:
         full_response_keys=list(response.keys()),
         response_size=len(str(response)),
     )
+
+
+@router.post(
+    "/responses",
+    responses=RESPONSES_API_RESPONSES,
+)
+async def create_response(request: ResponsesCreateRequest, req: Request) -> Any:
+    """Create a minimal OpenAI Responses API response."""
+    logger.info(
+        "Responses API request validated",
+        model=request.model,
+        stream=request.stream,
+        max_output_tokens=request.max_output_tokens,
+        project_id=request.project_id,
+        session_id=request.session_id,
+    )
+
+    chat_request = _responses_request_to_chat_request(
+        request, stream=bool(request.stream)
+    )
+    chat_response = await create_chat_completion(chat_request, req)
+
+    if request.stream:
+        if not isinstance(chat_response, StreamingResponse):
+            raise _http_error(
+                status.HTTP_500_INTERNAL_SERVER_ERROR,
+                "Unexpected chat completion streaming response type.",
+                "internal_error",
+                "unexpected_response_type",
+            )
+        return StreamingResponse(
+            _create_responses_sse_from_chat_stream(chat_response, request),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
+    if hasattr(chat_response, "model_dump"):
+        chat_response = chat_response.model_dump()
+
+    if not isinstance(chat_response, dict):
+        raise _http_error(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            "Unexpected chat completion response type.",
+            "internal_error",
+            "unexpected_response_type",
+        )
+
+    return _chat_response_to_responses_response(request, chat_response)
 
 
 @router.post(
