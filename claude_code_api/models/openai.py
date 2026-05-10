@@ -208,6 +208,93 @@ class ChatCompletionResponse(BaseModel):
     )
 
 
+class ResponsesCreateRequest(BaseModel):
+    """Minimal OpenAI Responses API request model."""
+
+    model: str = Field(..., description="ID of the model to use")
+    input: Union[str, List[Any]] = Field(
+        ..., description="Text input or message-like input objects"
+    )
+    temperature: Optional[float] = Field(
+        None, ge=0.0, le=2.0, description="Sampling temperature"
+    )
+    max_output_tokens: Optional[int] = Field(
+        None, ge=1, description="Maximum number of tokens to generate"
+    )
+    stream: Optional[bool] = Field(
+        False, description="Whether to stream response events"
+    )
+    instructions: Optional[str] = Field(None, description="System instructions")
+
+    # Extension fields for Claude Code
+    project_id: Optional[str] = Field(
+        None, description="Project ID for Claude Code context"
+    )
+    session_id: Optional[str] = Field(
+        None, description="Session ID to continue conversation"
+    )
+
+
+class ResponsesOutputText(BaseModel):
+    """Responses API output text content block."""
+
+    type: Literal["output_text"] = Field(
+        "output_text", description=OBJECT_TYPE_DESC
+    )
+    text: str = Field(..., description="Assistant output text")
+    annotations: List[Any] = Field(
+        default_factory=list, description="Output text annotations"
+    )
+
+
+class ResponsesOutputMessage(BaseModel):
+    """Responses API output message."""
+
+    id: str = Field(..., description="Message ID")
+    type: Literal["message"] = Field("message", description=OBJECT_TYPE_DESC)
+    status: Literal["completed"] = Field("completed", description="Message status")
+    role: Literal["assistant"] = Field("assistant", description="Message role")
+    content: List[ResponsesOutputText] = Field(
+        ..., description="Message content blocks"
+    )
+
+
+class ResponsesUsage(BaseModel):
+    """Responses API token usage."""
+
+    input_tokens: Optional[int] = Field(None, description="Input token count")
+    output_tokens: Optional[int] = Field(None, description="Output token count")
+    total_tokens: Optional[int] = Field(None, description="Total token count")
+
+
+class ResponsesResponse(BaseModel):
+    """Minimal OpenAI Responses API response model."""
+
+    id: str = Field(..., description="Response ID")
+    object: Literal["response"] = Field("response", description=OBJECT_TYPE_DESC)
+    created_at: int = Field(
+        ..., description="Unix timestamp of when the response was created"
+    )
+    status: Literal["completed"] = Field("completed", description="Response status")
+    completed_at: int = Field(
+        ..., description="Unix timestamp of when the response completed"
+    )
+    error: Optional[Dict[str, Any]] = Field(None, description="Response error")
+    incomplete_details: Optional[Dict[str, Any]] = Field(
+        None, description="Incomplete response details"
+    )
+    instructions: Optional[str] = Field(None, description="System instructions")
+    max_output_tokens: Optional[int] = Field(
+        None, description="Maximum number of output tokens requested"
+    )
+    model: str = Field(..., description="Model used for the response")
+    output: List[ResponsesOutputMessage] = Field(
+        ..., description="Response output items"
+    )
+    output_text: str = Field(..., description="Concatenated assistant output text")
+    usage: ResponsesUsage = Field(..., description="Token usage")
+
+
 # Streaming Models
 class ChatCompletionChunkDelta(BaseModel):
     """Delta object for streaming responses."""

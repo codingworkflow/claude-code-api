@@ -5,6 +5,7 @@ A FastAPI-based service that provides OpenAI-compatible endpoints
 while leveraging Claude Code's powerful workflow capabilities.
 """
 
+import time
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
@@ -121,6 +122,28 @@ app.add_middleware(
 app.middleware("http")(auth_middleware)
 
 
+@app.middleware("http")
+async def request_logging_middleware(request, call_next):
+    if not settings.access_log:
+        return await call_next(request)
+
+    start = time.perf_counter()
+    response = await call_next(request)
+    duration_ms = round((time.perf_counter() - start) * 1000, 2)
+
+    logger.info(
+        "HTTP request",
+        access_log=True,
+        method=request.method,
+        path=request.url.path,
+        status_code=response.status_code,
+        duration_ms=duration_ms,
+        client_host=request.client.host if request.client else None,
+    )
+
+    return response
+
+
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request, exc):
     """Custom handler for HTTP exceptions to support OpenAI error format."""
@@ -200,6 +223,7 @@ async def root():
         "description": "OpenAI-compatible API for Claude Code",
         "endpoints": {
             "chat": "/v1/chat/completions",
+            "responses": "/v1/responses",
             "models": "/v1/models",
             "projects": "/v1/projects",
             "sessions": "/v1/sessions",
@@ -225,4 +249,5 @@ if __name__ == "__main__":
         port=settings.port,
         reload=True,
         log_level=settings.log_level.lower(),
+        access_log=settings.access_log,
     )

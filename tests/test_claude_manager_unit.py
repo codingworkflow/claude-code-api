@@ -1,5 +1,6 @@
 """Unit tests for Claude manager helpers."""
 
+import asyncio
 import os
 import types
 
@@ -49,6 +50,43 @@ def test_decode_output_line():
 
     data = process._decode_output_line(b"not-json\n")
     assert data["type"] == "text"
+
+
+@pytest.mark.asyncio
+async def test_claude_process_redirects_stdin_to_devnull(monkeypatch):
+    process = cm.ClaudeProcess(session_id="sess", project_path="/tmp")
+    captured_kwargs = {}
+
+    class EmptyStream:
+        async def readline(self):
+            return b""
+
+    class FakeProcess:
+        stdout = EmptyStream()
+        stderr = EmptyStream()
+        returncode = None
+
+        def terminate(self):
+            pass
+
+        async def wait(self):
+            return 0
+
+    async def fake_create_subprocess_exec(*_args, **kwargs):
+        captured_kwargs.update(kwargs)
+        return FakeProcess()
+
+    async def fake_verify_startup(self):
+        return True
+
+    monkeypatch.setattr(cm.asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+    monkeypatch.setattr(cm.ClaudeProcess, "_verify_startup", fake_verify_startup)
+
+    try:
+        assert await process.start(prompt="hello") is True
+        assert captured_kwargs["stdin"] == asyncio.subprocess.DEVNULL
+    finally:
+        await process.stop()
 
 
 @pytest.mark.asyncio

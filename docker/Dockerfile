@@ -1,8 +1,17 @@
+# syntax=docker/dockerfile:1.7
+
 FROM ubuntu:24.04
 
-ENV DEBIAN_FRONTEND=noninteractive
+ARG APP_UID=1001
+ARG APP_GID=1001
 
-RUN apt-get update && apt-get install -y \
+ENV DEBIAN_FRONTEND=noninteractive
+ENV VIRTUAL_ENV=/home/claudeuser/venv
+ENV PATH="${VIRTUAL_ENV}/bin:/home/claudeuser/.local/bin:/home/claudeuser/.bun/bin:${PATH}"
+
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    apt-get update && apt-get install -y --no-install-recommends \
     bash \
     ca-certificates \
     curl \
@@ -11,30 +20,43 @@ RUN apt-get update && apt-get install -y \
     python3 \
     python3-pip \
     python3-venv \
-    sudo \
-    && rm -rf /var/lib/apt/lists/*
+    sudo
 
 # Create non-root user
-RUN useradd -m -s /bin/bash claudeuser && \
-    echo "claudeuser ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
+RUN groupadd --gid "${APP_GID}" claudeuser && \
+    useradd --uid "${APP_UID}" --gid "${APP_GID}" -m -s /bin/bash claudeuser && \
+    echo "claudeuser ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers && \
+    mkdir -p /home/claudeuser/app /home/claudeuser/.config/claude && \
+    chown -R claudeuser:claudeuser /home/claudeuser
 
 # Set up application directory
 WORKDIR /home/claudeuser/app
-COPY . /home/claudeuser/app
-RUN chown -R claudeuser:claudeuser /home/claudeuser/app
 
 USER claudeuser
 
 # Install Claude CLI using the official installer (no npm required)
 RUN curl -fsSL https://claude.ai/install.sh | bash
 
-# Create virtualenv and install dependencies
-RUN python3 -m venv /home/claudeuser/venv && \
-    /home/claudeuser/venv/bin/pip install --upgrade pip setuptools wheel && \
-    /home/claudeuser/venv/bin/pip install -e . --use-pep517 || \
-    /home/claudeuser/venv/bin/pip install -e .
+# Create virtualenv and install dependency metadata before copying source.
+RUN python3 -m venv "${VIRTUAL_ENV}"
 
-ENV PATH="/home/claudeuser/venv/bin:/home/claudeuser/.local/bin:/home/claudeuser/.bun/bin:${PATH}"
+RUN --mount=type=cache,id=claude-api-pip-cache,target=/home/claudeuser/.cache/pip,uid=1001,gid=1001,mode=0775 \
+    pip install --upgrade pip setuptools wheel
+
+COPY --chown=claudeuser:claudeuser pyproject.toml ./
+
+RUN --mount=type=cache,id=claude-api-pip-cache,target=/home/claudeuser/.cache/pip,uid=1001,gid=1001,mode=0775 \
+    python3 - <<'PY' > /tmp/runtime-requirements.txt && \
+    pip install -r /tmp/runtime-requirements.txt
+import tomllib
+from pathlib import Path
+
+metadata = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+for dependency in metadata["project"]["dependencies"]:
+    print(dependency)
+PY
+
+COPY --chown=claudeuser:claudeuser setup.py setup.cfg README.md VERSION ./
 
 # Create Claude config and workspace directories
 RUN mkdir -p /home/claudeuser/.config/claude /home/claudeuser/app/workspace
@@ -99,5 +121,10 @@ cd /home/claudeuser/app
 exec python3 -m claude_code_api.main
 EOF
 RUN chmod +x /home/claudeuser/entrypoint.sh
+
+COPY --chown=claudeuser:claudeuser claude_code_api ./claude_code_api
+
+RUN --mount=type=cache,id=claude-api-pip-cache,target=/home/claudeuser/.cache/pip,uid=1001,gid=1001,mode=0775 \
+    pip install --no-deps --no-build-isolation .
 
 ENTRYPOINT ["/home/claudeuser/entrypoint.sh"]

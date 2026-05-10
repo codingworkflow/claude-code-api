@@ -60,7 +60,9 @@ def _create_file_handler(
     return handler
 
 
-def _minimal_event_filter(debug_enabled: bool, min_level_name: str | None):
+def _minimal_event_filter(
+    debug_enabled: bool, min_level_name: str | None, access_log_enabled: bool = False
+):
     if debug_enabled:
         return None
 
@@ -76,6 +78,8 @@ def _minimal_event_filter(debug_enabled: bool, min_level_name: str | None):
             return event_dict
         if event_dict.get("lifecycle") is True:
             return event_dict
+        if access_log_enabled and event_dict.get("access_log") is True:
+            return event_dict
         if event_dict.get("event") in _LIFECYCLE_EVENTS:
             return event_dict
         raise structlog.DropEvent
@@ -84,10 +88,15 @@ def _minimal_event_filter(debug_enabled: bool, min_level_name: str | None):
 
 
 def _build_processors(
-    debug_enabled: bool, log_format: str, min_level_name: str | None
+    debug_enabled: bool,
+    log_format: str,
+    min_level_name: str | None,
+    access_log_enabled: bool = False,
 ) -> list[Any]:
     processors: list[Any] = [structlog.stdlib.filter_by_level]
-    minimal_filter = _minimal_event_filter(debug_enabled, min_level_name)
+    minimal_filter = _minimal_event_filter(
+        debug_enabled, min_level_name, access_log_enabled
+    )
     if minimal_filter:
         processors.append(minimal_filter)
 
@@ -122,6 +131,10 @@ def configure_logging(settings: Any) -> None:
     log_backup_count = int(getattr(settings, "log_backup_count", _DEFAULT_BACKUP_COUNT))
     log_to_console = bool(getattr(settings, "log_to_console", True))
     log_min_level = getattr(settings, "log_min_level_when_not_debug", "WARNING")
+    access_log_enabled = bool(getattr(settings, "access_log", False))
+
+    if access_log_enabled and log_level > logging.INFO:
+        log_level = logging.INFO
 
     handlers: list[logging.Handler] = []
     if log_to_file and log_file_path:
@@ -151,11 +164,15 @@ def configure_logging(settings: Any) -> None:
         root_logger.addHandler(handler)
 
     if not debug_enabled:
-        logging.getLogger("uvicorn.access").setLevel(logging.ERROR)
+        logging.getLogger("uvicorn.access").setLevel(
+            logging.INFO if access_log_enabled else logging.ERROR
+        )
         logging.getLogger("uvicorn.error").setLevel(logging.ERROR)
 
     structlog.configure(
-        processors=_build_processors(debug_enabled, log_format, log_min_level),
+        processors=_build_processors(
+            debug_enabled, log_format, log_min_level, access_log_enabled
+        ),
         context_class=dict,
         logger_factory=structlog.stdlib.LoggerFactory(),
         wrapper_class=structlog.stdlib.BoundLogger,

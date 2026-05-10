@@ -161,6 +161,7 @@ class Settings(BaseSettings):
 
     # Logging Configuration
     log_level: str = "INFO"
+    access_log: bool = False
     log_format: str = "json"
     log_file_path: str = default_log_file_path()
     log_to_file: bool = True
