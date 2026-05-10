@@ -100,7 +100,7 @@ class ClaudeProcess:
                 cwd=src_dir,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
-                stdin=asyncio.subprocess.PIPE,
+                stdin=asyncio.subprocess.DEVNULL,
             )
 
             self.is_running = True
