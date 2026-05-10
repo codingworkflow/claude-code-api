@@ -1,0 +1,34 @@
+.git
+.github
+.pytest_cache
+__pycache__
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info
+.eggs
+build
+dist
+.coverage
+htmlcov
+.mypy_cache
+.tox
+.venv
+venv
+
+# Local runtime state and secrets should not affect Docker build cache.
+.env
+.env.*
+*.db
+*.sqlite
+*.sqlite3
+claude_projects
+claude_sessions
+workspace
+config
+claude-config
+
+# Not needed in the runtime image.
+tests
+docs
+assets
