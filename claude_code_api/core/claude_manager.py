@@ -46,6 +46,7 @@ class ClaudeProcess:
         prompt: str,
         model: Optional[str] = None,
         system_prompt: Optional[str] = None,
+        json_schema: Optional[Dict[str, Any]] = None,
     ) -> bool:
         """Start Claude Code process and wait for completion."""
         self.last_error = None
@@ -59,6 +60,9 @@ class ClaudeProcess:
 
             if model:
                 cmd.extend(["--model", model])
+
+            if json_schema is not None:
+                cmd.extend(["--json-schema", json.dumps(json_schema)])
 
             # Always use stream-json output format (exact order from working example)
             cmd.extend(
@@ -86,7 +90,7 @@ class ClaudeProcess:
                     safe_cmd.append("<redacted>")
                     redact_next = False
                     continue
-                if part in ("-p", "--system-prompt"):
+                if part in ("-p", "--system-prompt", "--json-schema"):
                     safe_cmd.append(part)
                     redact_next = True
                     continue
@@ -440,6 +444,7 @@ class ClaudeManager:
         selected_model: Optional[str],
         system_prompt: Optional[str],
         on_cli_session_id: Optional[Callable[[str], None]],
+        json_schema: Optional[Dict[str, Any]] = None,
     ) -> ClaudeProcess:
         model_candidates = self._build_model_candidates(selected_model)
         last_error = "Failed to start Claude process"
@@ -454,6 +459,7 @@ class ClaudeManager:
                 prompt=prompt,
                 model=candidate_model,
                 system_prompt=system_prompt,
+                json_schema=json_schema,
             )
 
             if success:
@@ -502,6 +508,7 @@ class ClaudeManager:
         model: Optional[str] = None,
         system_prompt: Optional[str] = None,
         on_cli_session_id: Optional[Callable[[str], None]] = None,
+        json_schema: Optional[Dict[str, Any]] = None,
     ) -> ClaudeProcess:
         """Create new Claude session."""
         async with self._session_lock:
@@ -515,6 +522,7 @@ class ClaudeManager:
                 selected_model=model,
                 system_prompt=system_prompt,
                 on_cli_session_id=on_cli_session_id,
+                json_schema=json_schema,
             )
 
     async def _stop_session_locked(self, session_id: str) -> None:

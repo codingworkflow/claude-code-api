@@ -90,6 +90,18 @@ async def _log_raw_request(req: Request) -> None:
     )
 
 
+def _extract_json_schema(request: ChatCompletionRequest) -> Optional[Dict[str, Any]]:
+    response_format = request.response_format
+    if not response_format or response_format.type != "json_schema":
+        return None
+    if not response_format.json_schema:
+        raise _input_error(
+            "response_format.type is 'json_schema' but no json_schema was provided.",
+            "missing_json_schema",
+        )
+    return response_format.json_schema.schema_
+
+
 def _extract_prompts(request: ChatCompletionRequest) -> Tuple[str, str]:
     if not request.messages:
         raise _http_error(
@@ -145,6 +157,7 @@ async def _collect_non_streaming_response(
     session_id: str,
     model: str,
     project_id: str,
+    prefer_result_content: bool = False,
 ) -> Dict[str, Any]:
     messages, parser = await _gather_claude_messages(claude_process)
     _log_message_summary(messages)
@@ -155,7 +168,12 @@ async def _collect_non_streaming_response(
     )
 
     response = _build_non_streaming_response(
-        messages, session_id, model, usage_summary, project_id
+        messages,
+        session_id,
+        model,
+        usage_summary,
+        project_id,
+        prefer_result_content=prefer_result_content,
     )
     _log_response_payload(response)
     return response
@@ -226,9 +244,14 @@ def _build_non_streaming_response(
     model: str,
     usage_summary: Dict[str, Any],
     project_id: str,
+    prefer_result_content: bool = False,
 ) -> Dict[str, Any]:
     response = create_non_streaming_response(
-        messages=messages, session_id=session_id, model=model, usage=usage_summary
+        messages=messages,
+        session_id=session_id,
+        model=model,
+        usage=usage_summary,
+        prefer_result_content=prefer_result_content,
     )
     response["project_id"] = project_id
     return response
@@ -303,6 +326,7 @@ async def create_chat_completion(request: ChatCompletionRequest, req: Request) -
         response_model = claude_model or get_default_model()
 
         user_prompt, system_prompt = _extract_prompts(request)
+        json_schema = _extract_json_schema(request)
 
         # Handle project context
         project_id = request.project_id or f"default-{client_id}"
@@ -330,6 +354,7 @@ async def create_chat_completion(request: ChatCompletionRequest, req: Request) -
                 model=claude_model,
                 system_prompt=system_prompt,
                 on_cli_session_id=_register_cli_session,
+                json_schema=json_schema,
             )
         except ClaudeSessionConflictError as e:
             logger.warning(
@@ -381,7 +406,12 @@ async def create_chat_completion(request: ChatCompletionRequest, req: Request) -
         # Handle streaming vs non-streaming
         if request.stream:
             return StreamingResponse(
-                create_sse_response(api_session_id, response_model, claude_process),
+                create_sse_response(
+                    api_session_id,
+                    response_model,
+                    claude_process,
+                    prefer_result_content=json_schema is not None,
+                ),
                 media_type="text/event-stream",
                 headers={
                     "Cache-Control": "no-cache",
@@ -398,6 +428,7 @@ async def create_chat_completion(request: ChatCompletionRequest, req: Request) -
             session_id=api_session_id,
             model=response_model,
             project_id=project_id,
+            prefer_result_content=json_schema is not None,
         )
 
     except HTTPException:

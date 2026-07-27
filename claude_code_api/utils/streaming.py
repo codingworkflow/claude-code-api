@@ -59,7 +59,9 @@ class SSEFormatter:
 class OpenAIStreamConverter:
     """Converts Claude Code output to OpenAI-compatible streaming format."""
 
-    def __init__(self, model: str, session_id: str):
+    def __init__(
+        self, model: str, session_id: str, prefer_result_content: bool = False
+    ):
         self.model = model
         self.session_id = session_id
         self.completion_id = f"chatcmpl-{uuid.uuid4().hex[:29]}"
@@ -67,6 +69,7 @@ class OpenAIStreamConverter:
         self.chunk_index = 0
         self.parser = ClaudeOutputParser()
         self.tool_call_index = 0
+        self.prefer_result_content = prefer_result_content
 
     def _build_chunk(
         self, delta: Dict[str, Any], finish_reason: Optional[str] = None
@@ -138,6 +141,11 @@ class OpenAIStreamConverter:
                     saw_tool_calls = saw_tool_calls or saw_tools
 
                 if self.parser.is_final_message(message):
+                    if self.prefer_result_content and message.result:
+                        yield SSEFormatter.format_event(
+                            self._build_chunk({"content": message.result.strip()})
+                        )
+                        saw_assistant_text = True
                     break
 
             # Send final chunk
@@ -168,10 +176,16 @@ class StreamingManager:
         self.heartbeat_interval = 30  # seconds
 
     async def create_stream(
-        self, session_id: str, model: str, claude_process: ClaudeProcess
+        self,
+        session_id: str,
+        model: str,
+        claude_process: ClaudeProcess,
+        prefer_result_content: bool = False,
     ) -> AsyncGenerator[str, None]:
         """Create new streaming connection."""
-        converter = OpenAIStreamConverter(model, session_id)
+        converter = OpenAIStreamConverter(
+            model, session_id, prefer_result_content=prefer_result_content
+        )
         heartbeat_queue: asyncio.Queue[Optional[str]] = asyncio.Queue()
         self.active_streams[session_id] = StreamState(
             converter=converter, heartbeat_queue=heartbeat_queue
@@ -318,12 +332,15 @@ streaming_manager = StreamingManager()
 
 
 async def create_sse_response(
-    session_id: str, model: str, claude_process: ClaudeProcess
+    session_id: str,
+    model: str,
+    claude_process: ClaudeProcess,
+    prefer_result_content: bool = False,
 ) -> AsyncGenerator[str, None]:
     """Create SSE response for Claude Code output."""
     try:
         async for chunk in streaming_manager.create_stream(
-            session_id, model, claude_process
+            session_id, model, claude_process, prefer_result_content=prefer_result_content
         ):
             yield chunk
     except Exception as e:
@@ -385,8 +402,21 @@ def _extract_assistant_payload(
     return content_parts, tool_calls
 
 
+def _extract_result_content(messages: list) -> Optional[str]:
+    """Return the CLI's final `result` payload (the --json-schema-validated output)."""
+    for msg in reversed(messages):
+        normalized = normalize_claude_message(msg)
+        if normalized and normalized.type == "result" and normalized.result:
+            return normalized.result
+    return None
+
+
 def create_non_streaming_response(
-    messages: list, session_id: str, model: str, usage: Optional[Dict[str, Any]] = None
+    messages: list,
+    session_id: str,
+    model: str,
+    usage: Optional[Dict[str, Any]] = None,
+    prefer_result_content: bool = False,
 ) -> Dict[str, Any]:
     """Create non-streaming response."""
     completion_id = f"chatcmpl-{uuid.uuid4().hex[:29]}"
@@ -408,6 +438,11 @@ def create_non_streaming_response(
         complete_content = "\n".join(content_parts).strip()
     else:
         complete_content = ""
+
+    if prefer_result_content:
+        result_content = _extract_result_content(messages)
+        if result_content is not None:
+            complete_content = result_content.strip()
 
     logger.info(
         "Final response content",
