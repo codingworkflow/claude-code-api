@@ -95,8 +95,10 @@ def _extract_json_schema(request: ChatCompletionRequest) -> Optional[Dict[str, A
     if not response_format or response_format.type != "json_schema":
         return None
     if not response_format.json_schema:
-        raise _input_error(
+        raise _http_error(
+            status.HTTP_400_BAD_REQUEST,
             "response_format.type is 'json_schema' but no json_schema was provided.",
+            "invalid_request_error",
             "missing_json_schema",
         )
     return response_format.json_schema.schema_
