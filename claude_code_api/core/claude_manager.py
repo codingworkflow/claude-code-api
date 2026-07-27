@@ -455,12 +455,14 @@ class ClaudeManager:
                 project_path=project_path,
                 on_cli_session_id=on_cli_session_id,
             )
-            success = await process.start(
-                prompt=prompt,
-                model=candidate_model,
-                system_prompt=system_prompt,
-                json_schema=json_schema,
-            )
+            start_kwargs: Dict[str, Any] = {
+                "prompt": prompt,
+                "model": candidate_model,
+                "system_prompt": system_prompt,
+            }
+            if json_schema is not None:
+                start_kwargs["json_schema"] = json_schema
+            success = await process.start(**start_kwargs)
 
             if success:
                 self.processes[session_id] = process
