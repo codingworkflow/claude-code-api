@@ -96,12 +96,18 @@ class OpenAIStreamConverter:
         saw_text = False
         saw_tool_calls = False
 
-        text_content = self.parser.extract_text_content(message).strip()
-        if text_content:
-            chunks.append(
-                SSEFormatter.format_event(self._build_chunk({"content": text_content}))
-            )
-            saw_text = True
+        # In schema mode, the final `result` payload is the sole authoritative
+        # content; skip incremental assistant text so clients don't receive it
+        # concatenated with the schema-validated result.
+        if not self.prefer_result_content:
+            text_content = self.parser.extract_text_content(message).strip()
+            if text_content:
+                chunks.append(
+                    SSEFormatter.format_event(
+                        self._build_chunk({"content": text_content})
+                    )
+                )
+                saw_text = True
 
         tool_uses = self.parser.extract_tool_uses(message)
         if tool_uses:
