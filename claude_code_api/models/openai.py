@@ -71,6 +71,33 @@ class ToolCallDelta(BaseModel):
     )
 
 
+class JSONSchemaSpec(BaseModel):
+    """JSON Schema payload for structured output (OpenAI `response_format.json_schema` shape)."""
+
+    name: Optional[str] = Field(None, description="Schema name")
+    description: Optional[str] = Field(None, description="Schema description")
+    schema_: Dict[str, Any] = Field(
+        ..., alias="schema", description="JSON Schema definition"
+    )
+    strict: Optional[bool] = Field(
+        None, description="Whether to enforce strict schema adherence"
+    )
+
+    model_config = {"populate_by_name": True}
+
+
+class ResponseFormat(BaseModel):
+    """OpenAI-compatible response_format. Use type='json_schema' to constrain
+    Claude Code's output via the CLI --json-schema flag."""
+
+    type: Literal["text", "json_object", "json_schema"] = Field(
+        ..., description="Response format type"
+    )
+    json_schema: Optional[JSONSchemaSpec] = Field(
+        None, description="JSON schema definition when type is 'json_schema'"
+    )
+
+
 class ChatMessage(BaseModel):
     """Chat message model - accepts any content format."""
 
@@ -149,6 +176,13 @@ class ChatCompletionRequest(BaseModel):
     tool_choice: Optional[Union[str, ToolChoice]] = Field(
         None,
         description="Tool choice preference (e.g. 'auto', 'none', or a specific tool)",
+    )
+    response_format: Optional[ResponseFormat] = Field(
+        None,
+        description=(
+            "OpenAI-compatible response format. Set type='json_schema' with a "
+            "json_schema.schema to get CLI-validated structured output via --json-schema."
+        ),
     )
 
     # Extension fields for Claude Code
